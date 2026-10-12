@@ -1,6 +1,6 @@
-# IDA Pro provider
+# IDA provider
 
-REA adapts an existing [mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp) server into its native analysis tools. Install and configure IDA, Hex-Rays, Python, and upstream MCP using that repository's instructions. REA does not install, upgrade, activate, or license them, and does not bundle another IDA server.
+REA adapts an existing IDA MCP server into its native analysis tools. Existing IDA Pro profiles use [mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp); an optional native bridge for IDA Pro and IDA Free is described below. Install and configure your selected engine and upstream MCP using their instructions. REA does not install, upgrade, activate, or license them, and does not bundle another IDA server.
 
 Choose one lifecycle mode in an upstream MCP JSON registration. Set `REA_IDA_MCP_CONFIG` to that file, then select `ida` once through `REA_ANALYSIS_PROVIDER`, the CLI's `--provider ida`, or MCP's `open_binary.provider_id`. No provider startup occurs during discovery.
 
@@ -32,7 +32,29 @@ Open the **original input binary** in REA, not an `.idb` or `.i64` database. Its
 
 REA's close operation releases its MCP connection or proxy. It never saves or closes the existing GUI database. External edits remain visible because results are live and are not replayed from snapshots. These checks do not lock the GUI or prove that the database is unpatched.
 
-The legacy producer moves the active GUI as a side effect: assembly and raw function instructions jump to the function, and successful pseudocode opens or reuses a pseudocode view. A function dossier does both. `binary_session` reports these operations with `effects.may_show_ui: true` in attached mode; headless operations and the other attached operations report `false`.
+## Optional native IDA MCP bridge
+
+IDA Pro and IDA Free can use the separate [ida-free-mcp native plugin](https://github.com/0xshlomil/ida-free-mcp) through an explicit attached registration. Install and start that plugin using its upstream instructions, open the original binary in the IDA GUI, and wait for analysis. Native MCP 1.1.2 binds `0.0.0.0` without a listen-address setting. Restrict inbound access with the host firewall or use an upstream build that binds only to loopback before starting it. REA's loopback URL restriction does not change the plugin's listener. REA does not install IDA, build the plugin, activate a license, or launch the GUI.
+
+```json
+{
+  "mode": "attached",
+  "protocol": "native",
+  "url": "http://127.0.0.1:13337/mcp"
+}
+```
+
+Set `REA_IDA_MCP_CONFIG` to this file and select `ida` using the same CLI/MCP commands above. Omitting `protocol` preserves existing IDA Pro registrations. Native mode requires `resources/read` for `ida://idb/metadata` and its recorded input SHA-256; it never substitutes a digest of an unrelated local file. The native resource's `path` describes the IDB in the upstream protocol, not the original input path. REA retains it and checks database identity and image base before and after requests.
+
+This experimental profile provides function/string inventory and search, function lookup, assembly, GUI pseudocode, callees, address xrefs, instruction windows, and function dossiers. Direct callers remain unavailable: native code/data xref labels do not prove call edges. It requires neither IDAPython nor idalib. Native headless registrations are rejected.
+
+IDA Free's cloud decompiler needs network access and may request consent. Follow its licensing and supported architecture limits; see [IDA Free](https://hex-rays.com/ida-free). Decompilation moves GUI focus and the upstream plugin closes existing pseudocode tabs before requesting fresh output. REA advertises UI/network effects and closes only its MCP connection, preserving the open database. Rendered pseudocode has upstream traversal limits and does not prove complete source recovery. Cloud/widget failures remain explicit failures; retry after the GUI finishes or dismiss its prompt.
+
+Native MCP 1.1.2 can navigate in the previously focused pseudocode tab when switching functions. Its producing navigation order must be fixed to focus the disassembly view **before** jumping to the requested entry. This REA profile does not repair stale GUI output. Verification must include two different functions before claiming reliable function switching. Reliable function switching requires that upstream correction. The initial Linux verification uses a locally corrected native plugin.
+
+Native tool observations retain actual tool names and complete JSON text. Upstream `structuredContent` can be a shortened preview even while text contains the full result. REA reads the full native representation and rejects missing/malformed text instead of treating previews as complete observations.
+
+The legacy producer moves the active GUI as a side effect: assembly and raw function instructions jump to the function, and successful pseudocode opens or reuses a pseudocode view. A function dossier does both. Native GUI decompilation also changes the active view. `binary_session` reports these operations with `effects.may_show_ui: true`; headless operations and the other attached operations report `false`.
 
 ## Give REA a target for headless analysis
 
@@ -98,9 +120,9 @@ For guided registration, set `REA_IDA_MCP_CONFIG` before `rea setup --client <cl
 
 ## Coverage and evidence
 
-Both profiles support procedure/string inventory and literal or regex search, procedure resolution, pseudocode, assembly, raw function instructions, resolved callees, incoming address references, and a function dossier. Inventories and modern pseudocode/assembly follow upstream pagination. Upstream limits on modern xrefs and callees are retained as explicit truncation limitations. In the modern headless profile, targets that are not proven x86-only use processor-neutral `callgraph` edges instead of the x86 instruction checks in upstream `callees` (mrexodia/ida-pro-mcp#549). REA requests depth zero: the pinned upstream emits the root's outgoing edges without scanning child functions, then REA batches function-name lookup for those addresses. The graph covers recognized function destinations only; imports and other non-function targets remain unknown. A server without `callgraph` returns an empty relationship list with an explicit coverage limitation. Graph and path workflows retain those limitations alongside observed edges. A failed or inconsistent graph reply remains an error. A transport-level truncated preview is rejected rather than reported as complete evidence; the error preserves upstream retrieval guidance.
+All profiles support procedure/string inventory and literal or regex search, procedure resolution, pseudocode, assembly, raw function instructions, resolved callees, incoming address references, and a function dossier. Inventories and modern pseudocode/assembly follow upstream pagination. Upstream limits on modern xrefs and callees are retained as explicit truncation limitations. In the modern headless profile, targets that are not proven x86-only use processor-neutral `callgraph` edges instead of the x86 instruction checks in upstream `callees` (mrexodia/ida-pro-mcp#549). REA requests depth zero: the pinned upstream emits the root's outgoing edges without scanning child functions, then REA batches function-name lookup for those addresses. The graph covers recognized function destinations only; imports and other non-function targets remain unknown. A server without `callgraph` returns an empty relationship list with an explicit coverage limitation. Graph and path workflows retain those limitations alongside observed edges. A failed or inconsistent graph reply remains an error. A transport-level truncated preview is rejected rather than reported as complete evidence; the error preserves upstream retrieval guidance.
 
-The legacy profile additionally supports direct callers. Its producer may report call-site or interior addresses; REA resolves the reported function symbol to its canonical entry. The modern profile does not prove direct callers from its code/data xref labels, so that capability is unavailable and the dossier marks it unknown.
+The legacy profile additionally supports direct callers. Its producer may report call-site or interior addresses; REA resolves the reported function symbol to its canonical entry. The modern and native profiles do not prove direct callers from its code/data xref labels, so that capability is unavailable and the dossier marks it unknown.
 
 Complete body ranges, typed reference edges, CFG, referenced data, source locals, comment kinds, and database revision are unavailable. Empty unsupported dossier facets mean **unknown**, not observed absence. `binary_overview`, whole-symbol inventory, mutation, debugging, arbitrary Python forwarding, and requested GUI navigation are outside this adapter's coverage. Check session availability before composing a workflow that needs those facets.
 
@@ -109,5 +131,7 @@ Complete body ranges, typed reference edges, CFG, referenced data, source locals
 ## Verification
 
 Run `npm run verify:ida -- --target /absolute/path/to/program --procedure main` with a configured upstream server. It exercises production CLI and MCP tools, validates their output contracts and Evidence, checks original-input preservation and session cleanup, and keeps local target data out of its console summary. Supply `--package-root` to verify an extracted or installed package. See [testing](testing.md) for the distinction between adapter tests and real-provider evidence.
+
+To verify GUI function switching, add `--second-procedure other_function --second-marker unique_second_body_text`. The marker must occur in the second function's pseudocode and be absent from the first; the verifier also checks that returning to the first restores its text.
 
 The initial real workflows use stdio registrations for the legacy Windows GUI profile and a Windows x64 headless supervisor with IDA 9.3. The headless workflow has also passed on macOS arm64 with IDA Professional 9.1 (build 9.1.250226) against the same upstream commit `c133c3853faa111a9b00ee615c013b720d0c4acd`, using a source-built arm64 Mach-O fixture; Mach-O C symbols carry a leading underscore, so the procedure name is `_rea_fixture_add`. Streamable HTTP is tested against a loopback MCP fixture with the pinned client SDK; a real IDA HTTP-supervisor workflow remains unverified. Linux headless engine operation, other IDA releases, architectures, and modern attached GUI tools require their corresponding real workflows before support is claimed.

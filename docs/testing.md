@@ -616,7 +616,7 @@ or upgrade Java, Ghidra, .NET or native toolchains. See
 `npm run verify:ida -- --target /absolute/path/to/program --procedure main`
 uses the existing `REA_IDA_MCP_CONFIG` registration. It installs no engine,
 Python package, or compiler. The target must already be open in the GUI for
-the legacy attached profile; the database-supervisor headless profile opens
+the legacy or native attached profile; the database-supervisor headless profile opens
 a digest-verified private copy. A caller-supplied fixture keeps prerequisites
 limited to the selected engine and host. `tests/conformance/ida/inventory.c`
 provides an optional small native fixture source with an exported
@@ -647,6 +647,8 @@ the transient `busy` health a worker can report right after opening, that lane
 failed intermittently on that host. Linux headless, modern attached GUI tools,
 other engine versions and architectures remain unverified; see the
 [provider guide](ida-provider.md).
+
+Native IDA MCP verification uses `"protocol": "native"` with an already-running native plugin. Add `--second-procedure other_function --second-marker unique_second_body_text` to exercise GUI function switching and a return to the first function. The literal marker must appear in the second function's pseudocode and be absent from the first. Native cloud/widget failures are reported without hidden retries. Local validation covers Linux x64 IDA Free 9.4 with native MCP 1.1.2 and a corrected upstream navigation order; stock 1.1.2 switching and native Windows/macOS workflows are not established by that run. See the [optional native bridge prerequisites](ida-provider.md#optional-native-ida-mcp-bridge).
 
 ## DOS Ghidra analysis
 

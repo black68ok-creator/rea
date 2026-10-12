@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  nativeDecompileSchema,
+  nativeDisassemblySchema,
+  nativeCalleesSchema,
+  nativeXrefsSchema,
+} from "./IdaNativeProtocol.js";
 import { analysisSearchInput } from "../contracts/analysisSearchContract.js";
 import {
   AnalysisInputError,
@@ -69,7 +75,7 @@ export class IdaOperationRunner {
   relationshipCoverage: RelationshipCoverage | undefined;
   constructor(
     private readonly connection: IdaMcpConnection,
-    private readonly protocol: "legacy" | "modern",
+    private readonly protocol: "legacy" | "modern" | "native",
     private readonly database?: string,
     private readonly options: {
       readonly signal?: AbortSignal | undefined;
@@ -131,7 +137,7 @@ export class IdaOperationRunner {
    * addresses were reported by IDA itself.
    */
   async resolve(query: string, requestedBy?: string): Promise<IdaFunction> {
-    if (this.protocol === "modern") {
+    if (this.protocol !== "legacy") {
       const item = modernLookupSchema.parse(
         await this.call("lookup_funcs", { queries: [query] }),
       )[0];
@@ -231,7 +237,7 @@ export class IdaOperationRunner {
       } else {
         const page = modernStringsSchema.parse(
           await this.call("find_regex", {
-            pattern: "(?s).*",
+            pattern: this.protocol === "native" ? "[\\s\\S]*" : "(?s).*",
             offset,
             limit: 100,
           }),
@@ -260,7 +266,11 @@ export class IdaOperationRunner {
     let result: IdaDisassembly | undefined;
     let offset: number | null = 0;
     while (offset !== null) {
-      const page = modernDisassemblySchema.parse(
+      const page = (
+        this.protocol === "native"
+          ? nativeDisassemblySchema
+          : modernDisassemblySchema
+      ).parse(
         await this.call("disasm", {
           addr: fn.address,
           offset,
@@ -294,6 +304,23 @@ export class IdaOperationRunner {
         .string()
         .nullable()
         .parse(await this.call("decompile_function", { address: fn.address }));
+    if (this.protocol === "native") {
+      const page = nativeDecompileSchema.parse(
+        await this.call("decompile", { addr: fn.address }),
+      );
+      if (page.addr !== fn.address)
+        throw new AnalysisProtocolError(
+          "Native IDA pseudocode identifies a different function than the resolved entry.",
+        );
+      if (!page.ok || page.error !== undefined || page.pseudocode === undefined)
+        throw new AnalysisProtocolError(
+          `Native IDA decompilation failed: ${page.error ?? "missing pseudocode"}`,
+        );
+      this.limitations.push(
+        "Native pseudocode is rendered GUI text; the upstream viewer traversal is bounded and does not establish complete source recovery.",
+      );
+      return page.pseudocode;
+    }
     const result: string[] = [];
     let offset: number | null = 0;
     while (offset !== null) {
@@ -323,9 +350,9 @@ export class IdaOperationRunner {
       return legacyXrefsSchema.parse(
         await this.call("get_xrefs_to", { address }),
       );
-    const page = modernXrefsSchema.parse(
-      await this.call("xrefs_to", { addrs: [address], limit: 1000 }),
-    )[0];
+    const page = (
+      this.protocol === "native" ? nativeXrefsSchema : modernXrefsSchema
+    ).parse(await this.call("xrefs_to", { addrs: [address], limit: 1000 }))[0];
     if (page?.xrefs == null || page.error !== undefined)
       throw new AnalysisProtocolError(
         `IDA xrefs failed: ${page?.error ?? "missing references"}`,
@@ -367,16 +394,17 @@ export class IdaOperationRunner {
       }
     } else if (direction === "callers") {
       this.limitations.push(
-        "Modern upstream xrefs classify references as code or data, without proving call edges. Direct callers are unavailable in this profile.",
+        "Upstream xrefs classify references as code or data, without proving call edges. Direct callers are unavailable in this profile.",
       );
       this.relationshipCoverage = {
         status: "unknown",
-        reason:
-          "Modern upstream xrefs do not establish direct caller relationships.",
+        reason: "Upstream xrefs do not establish direct caller relationships.",
       };
       return [];
     } else {
-      const page = modernCalleesSchema.parse(
+      const page = (
+        this.protocol === "native" ? nativeCalleesSchema : modernCalleesSchema
+      ).parse(
         await this.call("callees", { addrs: [fn.address], limit: 500 }),
       )[0];
       if (page?.callees == null || page.error !== undefined)
@@ -459,7 +487,7 @@ export class IdaOperationRunner {
       case "procedure_assembly":
         return lines(await this.assembly(fn)).join("\n");
       case "procedure_callers":
-        if (this.protocol === "modern")
+        if (this.protocol !== "legacy")
           throw new AnalysisProtocolError(
             "This IDA MCP profile cannot distinguish direct callers from other code references.",
           );

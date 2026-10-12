@@ -3,14 +3,14 @@ import type {
   CapabilityDescriptor,
 } from "../application/AnalysisProvider.js";
 
-/** This version identifies REA's adapter, not IDA or the upstream Python package. */
+/** This version identifies REA's adapter, not IDA or the upstream MCP server. */
 export const IDA_PROVIDER_IDENTITY = Object.freeze({
   id: "ida",
-  name: "IDA Pro MCP adapter",
+  name: "IDA MCP adapter",
   version: "1",
 });
 
-/** Read-only analyst outcomes supported by both upstream compatibility profiles. */
+/** Read-only analyst outcomes supported by the upstream compatibility profiles. */
 export const IDA_OPERATIONS = Object.freeze([
   "list_procedures",
   "search_procedures",
@@ -53,15 +53,17 @@ const ATTACHED_GUI_NAVIGATION_OPERATIONS: ReadonlySet<IdaOperation> = new Set([
 export const idaCapabilities = (
   mode: "attached" | "headless",
   stdio: boolean,
+  native = false,
 ): readonly CapabilityDescriptor[] =>
   IDA_OPERATIONS.map((operation) => ({
     provider: IDA_PROVIDER_IDENTITY,
     operation,
-    ...(mode === "headless" && operation === "procedure_callers"
+    ...((mode === "headless" || native) && operation === "procedure_callers"
       ? ({
           available: false,
-          reason:
-            "The modern upstream profile reports code references without proving direct call edges.",
+          reason: native
+            ? "The native upstream profile reports code references without proving direct call edges."
+            : "The modern upstream profile reports code references without proving direct call edges.",
         } as const)
       : ({ available: true, reason: null } as const)),
     cachePolicy: "live",
@@ -70,7 +72,10 @@ export const idaCapabilities = (
       launchesProcess: stdio || mode === "headless",
       mayShowUi:
         mode === "attached" &&
-        ATTACHED_GUI_NAVIGATION_OPERATIONS.has(operation),
+        (native
+          ? operation === "procedure_pseudo_code" ||
+            operation === "analyze_function"
+          : ATTACHED_GUI_NAVIGATION_OPERATIONS.has(operation)),
       mayAccessNetwork: true,
       mayWriteFilesystem: stdio || mode === "headless",
       changesPermissions: false,
