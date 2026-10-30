@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>온라인 법당 · 고요한 마음</title>
+    <meta
+      name="description"
+      content="언제 어디서나 부처님 앞에 앉을 수 있는 온라인 법당. 촛불과 향 공양, 연등 발원, 108배, 반야심경 독송, 명상."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top">卍 고요한 마음 법당</a>
+      <nav aria-label="주 메뉴">
+        <a href="#offering">공양</a>
+        <a href="#lantern">연등</a>
+        <a href="#bows">108배</a>
+        <a href="#sutra">경전</a>
+        <a href="#meditation">명상</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hall" aria-labelledby="hall-title">
+        <div class="dancheong" aria-hidden="true"></div>
+        <h1 id="hall-title">대웅전 <span>大雄殿</span></h1>
+        <p class="lead">잠시 걸음을 멈추고, 부처님 앞에 고요히 앉아 보세요.</p>
+
+        <div class="altar">
+          <div class="candle-row" id="altar-candles"></div>
+          <svg
+            class="buddha"
+            viewBox="0 0 300 320"
+            role="img"
+            aria-label="연화대 위에 앉으신 석가모니 부처님"
+          >
+            <defs>
+              <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="#ffe7a3" stop-opacity="0.9" />
+                <stop offset="60%" stop-color="#e0a93c" stop-opacity="0.35" />
+                <stop offset="100%" stop-color="#e0a93c" stop-opacity="0" />
+              </radialGradient>
+              <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#f6d27a" />
+                <stop offset="100%" stop-color="#b07a22" />
+              </linearGradient>
+              <linearGradient id="lotus" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#f3a1a8" />
+                <stop offset="100%" stop-color="#b8475a" />
+              </linearGradient>
+            </defs>
+            <circle class="halo" cx="150" cy="120" r="115" fill="url(#halo)" />
+            <circle
+              cx="150"
+              cy="78"
+              r="44"
+              fill="none"
+              stroke="#f6d27a"
+              stroke-opacity="0.6"
+              stroke-width="2"
+            />
+            <!-- body -->
+            <path
+              d="M150 104 C112 108 96 140 92 176 C88 210 70 226 58 246 L242 246 C230 226 212 210 208 176 C204 140 188 108 150 104 Z"
+              fill="url(#gold)"
+            />
+            <!-- robe fold -->
+            <path
+              d="M118 150 C134 170 166 170 182 150"
+              fill="none"
+              stroke="#8a5a14"
+              stroke-width="2"
+              opacity="0.6"
+            />
+            <!-- hands in meditation mudra -->
+            <ellipse cx="150" cy="214" rx="36" ry="12" fill="#e9bd5c" />
+            <!-- crossed legs -->
+            <path
+              d="M48 252 C80 230 220 230 252 252 C232 268 68 268 48 252 Z"
+              fill="url(#gold)"
+            />
+            <!-- head -->
+            <circle cx="150" cy="80" r="28" fill="url(#gold)" />
+            <circle cx="150" cy="48" r="11" fill="#9c6a1c" />
+            <path
+              d="M138 84 Q144 88 150 84 Q156 88 162 84"
+              fill="none"
+              stroke="#7a4e10"
+              stroke-width="1.6"
+            />
+            <circle cx="150" cy="70" r="2" fill="#fff4cf" />
+            <!-- lotus pedestal -->
+            <g fill="url(#lotus)">
+              <path d="M40 262 Q70 300 110 270 Q80 262 40 262 Z" />
+              <path d="M260 262 Q230 300 190 270 Q220 262 260 262 Z" />
+              <path d="M95 266 Q120 312 150 270 Q120 260 95 266 Z" />
+              <path d="M205 266 Q180 312 150 270 Q180 260 205 266 Z" />
+              <path d="M120 268 Q150 318 180 268 Q150 258 120 268 Z" />
+            </g>
+          </svg>
+          <div class="incense-holder" id="incense-holder"></div>
+        </div>
+
+        <div class="hall-actions">
+          <button type="button" class="btn primary" id="bell-btn">
+            범종 울리기
+          </button>
+          <button type="button" class="btn" id="chant-btn">
+            석가모니불 정근 듣기
+          </button>
+        </div>
+        <p class="visit-note" id="visit-note"></p>
+      </section>
+
+      <section id="offering" class="panel" aria-labelledby="offering-title">
+        <h2 id="offering-title">공양 올리기</h2>
+        <p class="sub">
+          육법공양 가운데 네 가지를 올려 보세요. 정성은 이 기기에 기록됩니다.
+        </p>
+        <div class="offerings">
+          <button type="button" class="offer" data-offer="candle">
+            <span class="icon" aria-hidden="true">🕯️</span>
+            <strong>등(燈) 공양</strong>
+            <small>어둠을 밝히는 지혜</small>
+            <em data-count="candle">0</em>
+          </button>
+          <button type="button" class="offer" data-offer="incense">
+            <span class="icon glyph" aria-hidden="true">香</span>
+            <strong>향(香) 공양</strong>
+            <small>계율의 향기</small>
+            <em data-count="incense">0</em>
+          </button>
+          <button type="button" class="offer" data-offer="flower">
+            <span class="icon" aria-hidden="true">🪷</span>
+            <strong>꽃 공양</strong>
+            <small>수행의 꽃</small>
+            <em data-count="flower">0</em>
+          </button>
+          <button type="button" class="offer" data-offer="tea">
+            <span class="icon" aria-hidden="true">🍵</span>
+            <strong>차(茶) 공양</strong>
+            <small>감로의 맑음</small>
+            <em data-count="tea">0</em>
+          </button>
+        </div>
+      </section>
+
+      <section id="lantern" class="panel" aria-labelledby="lantern-title">
+        <h2 id="lantern-title">연등 달기 · 발원</h2>
+        <p class="sub">
+          이름과 발원을 적어 연등을 밝히세요. 연등은 이 기기의 법당에 걸립니다.
+        </p>
+        <form id="lantern-form" class="lantern-form">
+          <label>
+            이름
+            <input
+              name="name"
+              maxlength="20"
+              required
+              placeholder="불자 이름"
+            />
+          </label>
+          <label>
+            발원
+            <input
+              name="wish"
+              maxlength="60"
+              required
+              placeholder="모든 생명이 평안하기를"
+            />
+          </label>
+          <label>
+            연등 색
+            <select name="color">
+              <option value="#e8505b">홍련</option>
+              <option value="#f2b33d">황금</option>
+              <option value="#4fa37f">청록</option>
+              <option value="#6b8fe0">청련</option>
+              <option value="#f3f0e8">백련</option>
+            </select>
+          </label>
+          <button type="submit" class="btn primary">연등 밝히기</button>
+        </form>
+        <ul class="lanterns" id="lanterns" aria-live="polite"></ul>
+      </section>
+
+      <section id="bows" class="panel" aria-labelledby="bows-title">
+        <h2 id="bows-title">108배</h2>
+        <p class="sub">
+          한 번 절할 때마다 누르세요. 목탁 소리와 함께 번뇌를 하나씩
+          내려놓습니다.
+        </p>
+        <div class="bow-box">
+          <button
+            type="button"
+            class="moktak"
+            id="bow-btn"
+            aria-label="절 한 번 하기 (목탁)"
+          >
+            <svg viewBox="0 0 120 100" aria-hidden="true">
+              <ellipse cx="60" cy="58" rx="52" ry="38" fill="#7a3b12" />
+              <ellipse cx="60" cy="52" rx="46" ry="30" fill="#a55a24" />
+              <path
+                d="M22 62 Q60 78 98 62"
+                stroke="#3d1a06"
+                stroke-width="5"
+                fill="none"
+              />
+            </svg>
+          </button>
+          <div class="bow-count">
+            <span id="bow-count">0</span> / 108
+            <div class="bar"><div id="bow-bar"></div></div>
+            <button type="button" class="btn small" id="bow-reset">
+              처음부터
+            </button>
+          </div>
+        </div>
+        <p class="bow-msg" id="bow-msg" aria-live="polite"></p>
+      </section>
+
+      <section id="sutra" class="panel" aria-labelledby="sutra-title">
+        <h2 id="sutra-title">마하반야바라밀다심경</h2>
+        <p class="sub">
+          한 구절씩 따라 읽으세요. 구절을 누르면 그 자리에서 목탁이 울립니다.
+        </p>
+        <ol class="sutra" id="sutra-lines"></ol>
+      </section>
+
+      <section id="meditation" class="panel" aria-labelledby="med-title">
+        <h2 id="med-title">좌선 · 명상</h2>
+        <p class="sub">
+          시간을 정하고 숨을 바라보세요. 시작과 끝에 종이 울립니다.
+        </p>
+        <div class="med">
+          <div class="breath" id="breath" aria-hidden="true"></div>
+          <div class="med-time" id="med-time">05:00</div>
+          <div class="med-controls">
+            <button type="button" class="btn small" data-min="5">5분</button>
+            <button type="button" class="btn small" data-min="10">10분</button>
+            <button type="button" class="btn small" data-min="20">20분</button>
+            <button type="button" class="btn primary" id="med-start">
+              시작
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>모든 중생이 괴로움에서 벗어나 평안하기를. 나무 석가모니불.</p>
+      <p class="small">
+        기록은 이 브라우저에만 저장되며 어디에도 전송되지 않습니다.
+      </p>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
