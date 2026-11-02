@@ -1,0 +1,1518 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>Lantern Drift 3D</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bungee&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* Layout: full-bleed WebGL arena, HUD pinned to the corners, arcade cabinet screens centered. */
+      :root {
+        --bg: #020309;
+        --ink: #f3e6c8;
+        --ink-dim: rgba(243, 230, 200, 0.62);
+        --amber: #ffb84d;
+        --ember: #ff6a4d;
+        --firefly: #7dffd2;
+        --shadow: #c58bff;
+        --display: "Bungee", "Impact", "Arial Black", system-ui, sans-serif;
+        --body:
+          system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR",
+          "Malgun Gothic", sans-serif;
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: var(--body);
+        overflow: hidden;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      #stage {
+        position: fixed;
+        inset: 0;
+      }
+      #stage canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        cursor: crosshair;
+      }
+      .hud {
+        position: fixed;
+        top: calc(14px + env(safe-area-inset-top, 0px));
+        display: grid;
+        gap: 6px;
+        pointer-events: none;
+        text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+      }
+      .hud-left {
+        left: max(16px, env(safe-area-inset-left, 0px));
+        width: min(240px, 46vw);
+      }
+      .hud-right {
+        right: max(16px, env(safe-area-inset-right, 0px));
+        text-align: right;
+        justify-items: end;
+      }
+      .label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        color: var(--ink-dim);
+      }
+      .bar {
+        position: relative;
+        height: 12px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 184, 77, 0.35);
+      }
+      .bar-fill {
+        position: absolute;
+        inset: 0 auto 0 0;
+        background: linear-gradient(90deg, #d9761a, var(--amber));
+        box-shadow: 0 0 12px rgba(255, 184, 77, 0.7);
+      }
+      .bar-fill.low {
+        background: var(--ember);
+        animation: blink 0.5s steps(2) infinite;
+      }
+      .bar-cost {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: rgba(2, 3, 9, 0.85);
+      }
+      .flare-status {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ink-dim);
+      }
+      .flare-status.ready {
+        color: var(--amber);
+      }
+      .score {
+        font-family: var(--display);
+        font-size: clamp(24px, 6vw, 34px);
+        line-height: 1;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .meta {
+        font-size: 12px;
+        color: var(--ink-dim);
+        font-variant-numeric: tabular-nums;
+      }
+      .combo {
+        font-family: var(--display);
+        font-size: 22px;
+        color: var(--firefly);
+        text-shadow: 0 0 14px rgba(125, 255, 210, 0.8);
+        transition: transform 0.12s;
+      }
+      .combo {
+        transform-origin: right center;
+      }
+      .combo.bump {
+        transform: scale(1.35);
+      }
+      .banner {
+        position: fixed;
+        left: 0;
+        right: 0;
+        top: 22%;
+        text-align: center;
+        font-family: var(--display);
+        font-size: clamp(28px, 8vw, 56px);
+        color: var(--amber);
+        text-shadow: 0 0 24px rgba(255, 140, 40, 0.8);
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.3s;
+      }
+      .banner.show {
+        opacity: 1;
+      }
+      .screen {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding-left: max(16px, env(safe-area-inset-left, 0px));
+        padding-right: max(16px, env(safe-area-inset-right, 0px));
+        background: radial-gradient(
+          circle at 50% 50%,
+          rgba(2, 3, 9, 0.25),
+          rgba(2, 3, 9, 0.82)
+        );
+        cursor: pointer;
+      }
+      .panel {
+        display: grid;
+        gap: 14px;
+        justify-items: center;
+        text-align: center;
+        max-width: 36rem;
+      }
+      .title {
+        margin: 0;
+        font-family: var(--display);
+        font-weight: 400;
+        font-size: clamp(38px, 11vw, 84px);
+        line-height: 0.95;
+        color: var(--amber);
+        text-shadow:
+          0 0 30px rgba(255, 150, 50, 0.65),
+          0 4px 0 #7a3a0c;
+        text-wrap: balance;
+      }
+      .title small {
+        display: block;
+        font-size: 0.32em;
+        letter-spacing: 0.5em;
+        color: var(--ink);
+        text-shadow: none;
+        margin-top: 10px;
+      }
+      .rules {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 6px;
+        font-size: 14px;
+        color: var(--ink-dim);
+      }
+      .rules b {
+        color: var(--ink);
+      }
+      .dot {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        margin-right: 6px;
+        vertical-align: 1px;
+      }
+      .press {
+        font-family: var(--display);
+        font-size: 18px;
+        color: var(--amber);
+        animation: blink 1s steps(2) infinite;
+      }
+      .big-score {
+        font-family: var(--display);
+        font-size: clamp(40px, 12vw, 72px);
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .new-best {
+        color: var(--firefly);
+        font-weight: 700;
+      }
+      #flareBtn {
+        position: fixed;
+        right: max(20px, env(safe-area-inset-right, 0px));
+        bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+        width: 78px;
+        height: 78px;
+        border-radius: 50%;
+        border: 2px solid var(--amber);
+        background: rgba(255, 184, 77, 0.15);
+        color: var(--amber);
+        font-family: var(--display);
+        font-size: 13px;
+        touch-action: none;
+      }
+      #flareBtn:disabled {
+        opacity: 0.35;
+      }
+      #flareBtn:focus-visible {
+        outline: 2px solid var(--ink);
+        outline-offset: 3px;
+      }
+      .popup {
+        position: fixed;
+        left: 0;
+        top: 0;
+        font-family: var(--display);
+        font-size: 16px;
+        pointer-events: none;
+        white-space: nowrap;
+        text-shadow: 0 0 10px rgba(0, 0, 0, 0.9);
+        will-change: transform, opacity;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0.35;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .press,
+        .bar-fill.low {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage" aria-label="Lantern Drift 3D 게임 화면"></div>
+
+    <div class="hud hud-left" id="hudLeft" hidden>
+      <div class="label">빛 LIGHT</div>
+      <div class="bar">
+        <div class="bar-fill" id="lightFill"></div>
+        <div class="bar-cost" id="lightCost"></div>
+      </div>
+      <div class="flare-status" id="flareStatus">플레어 충전 중…</div>
+    </div>
+    <div class="hud hud-right" id="hudRight" hidden>
+      <div class="score" id="score">0</div>
+      <div class="meta" id="meta">0:00</div>
+      <div class="combo" id="combo"></div>
+    </div>
+    <div class="banner" id="banner"></div>
+    <button id="flareBtn" type="button" hidden>FLARE</button>
+
+    <div class="screen" id="titleScreen">
+      <div class="panel">
+        <h1 class="title">LANTERN DRIFT<small>등불 표류 3D</small></h1>
+        <ul class="rules">
+          <li>빛은 <b>생명이자 무기</b>입니다. 꺼지면 끝.</li>
+          <li>
+            <span class="dot" style="background: var(--firefly)"></span
+            ><b>반딧불</b>을 모아 빛을 채우세요
+          </li>
+          <li>
+            <span class="dot" style="background: var(--shadow)"></span
+            ><b>그림자</b>는 빛의 고리 안에서 느려지고 타 버립니다
+          </li>
+          <li>연속으로 먹고 태우면 <b>콤보 배수</b>가 올라갑니다 (최대 ×8)</li>
+          <li><b>플레어</b> Space · 우클릭 · 버튼 — 빛을 써서 주변을 정화</li>
+          <li>
+            이동 마우스/터치 · WASD/방향키 &nbsp; 일시정지 P &nbsp; 소리 M
+          </li>
+        </ul>
+        <div class="press" id="pressStart">PRESS START</div>
+      </div>
+    </div>
+    <div class="screen" id="pauseScreen" hidden>
+      <div class="panel">
+        <div class="title" style="font-size: clamp(32px, 9vw, 56px)">
+          PAUSED
+        </div>
+        <div class="press">P 또는 클릭으로 계속</div>
+      </div>
+    </div>
+    <div class="screen" id="overScreen" hidden>
+      <div class="panel">
+        <div
+          class="title"
+          style="font-size: clamp(34px, 10vw, 64px); color: var(--ember)"
+        >
+          GAME OVER
+        </div>
+        <div class="big-score" id="finalScore">0</div>
+        <div class="meta" id="finalMeta"></div>
+        <div class="new-best" id="newBest" hidden>✦ NEW HIGH SCORE ✦</div>
+        <div class="press">클릭 · Enter · R 로 다시 시작</div>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+      "use strict";
+
+      /** All tuning values live here (data-driven gameplay). World units ≈ 1 m. */
+      const CONFIG = {
+        arena: { radius: 26, pillars: 10, safeCenter: 6 },
+        player: { speed: 12, radius: 0.55, followDist: 4 },
+        light: {
+          max: 100,
+          start: 72,
+          decayPerSec: 2.1,
+          decayRampPerMin: 1.2,
+          radiusMin: 2.4,
+          radiusPerPoint: 0.105,
+          visualReach: 1.7,
+        },
+        firefly: {
+          maxOnField: 7,
+          spawnEvery: 1.05,
+          restore: 9,
+          score: 10,
+          pickupRadius: 1.1,
+          life: 14,
+        },
+        wisp: {
+          spawnStart: 2.3,
+          spawnMin: 0.42,
+          spawnRampPerMin: 0.9,
+          speedDark: 5.2,
+          speedRampPerMin: 1.8,
+          lightSlow: 0.42,
+          burnPerSec: 0.85,
+          contactDrain: 22,
+          burnScore: 15,
+          radius: 0.7,
+        },
+        flare: {
+          cost: 18,
+          cooldown: 1.4,
+          radiusMul: 1.5,
+          radiusAdd: 4,
+          score: 25,
+        },
+        combo: { window: 2.5, max: 8 },
+        wave: { every: 30 },
+        score: { perSecond: 5 },
+        shake: { hit: 0.6, flare: 0.3, decay: 2.2 },
+        camera: { height: 17, back: 11, portraitBoost: 1.45 },
+        maxParticles: 700,
+      };
+
+      const $ = (id) => document.getElementById(id);
+      const rand = (a, b) => a + Math.random() * (b - a);
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+      const reducedMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+      const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+
+      if (typeof THREE === "undefined") {
+        $("pressStart").textContent =
+          "3D 엔진(three.js)을 불러오지 못했습니다. 네트워크를 확인하고 새로고침하세요.";
+        throw new Error("three.js failed to load");
+      }
+
+      // ---------- persistent best ----------
+      function readBest() {
+        try {
+          return Number(localStorage.getItem("lantern-drift-3d-best")) || 0;
+        } catch {
+          return 0;
+        }
+      }
+      function writeBest(v) {
+        try {
+          localStorage.setItem("lantern-drift-3d-best", String(v));
+        } catch {
+          /* storage unavailable: best lives for this session only */
+        }
+      }
+
+      /** Gameplay light radius (world units) for a light value. */
+      function lightRadius(light) {
+        return CONFIG.light.radiusMin + light * CONFIG.light.radiusPerPoint;
+      }
+
+      // ---------- audio ----------
+      const audio = { ctx: null, muted: false };
+      function ensureAudio() {
+        if (!audio.ctx) {
+          try {
+            audio.ctx = new (
+              window.AudioContext || window.webkitAudioContext
+            )();
+          } catch {
+            audio.ctx = null;
+          }
+        }
+        if (audio.ctx && audio.ctx.state === "suspended") audio.ctx.resume();
+      }
+      function tone(freq, dur, type = "sine", vol = 0.08, slideTo = null) {
+        if (!audio.ctx || audio.muted) return;
+        const t = audio.ctx.currentTime;
+        const o = audio.ctx.createOscillator();
+        const g = audio.ctx.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(freq, t);
+        if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+        g.gain.setValueAtTime(vol, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        o.connect(g).connect(audio.ctx.destination);
+        o.start(t);
+        o.stop(t + dur + 0.02);
+      }
+      function noise(dur, vol = 0.12) {
+        if (!audio.ctx || audio.muted) return;
+        const len = Math.floor(audio.ctx.sampleRate * dur);
+        const buf = audio.ctx.createBuffer(1, len, audio.ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < len; i++)
+          data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+        const src = audio.ctx.createBufferSource();
+        const f = audio.ctx.createBiquadFilter();
+        const g = audio.ctx.createGain();
+        f.type = "lowpass";
+        f.frequency.value = 1400;
+        g.gain.value = vol;
+        src.buffer = buf;
+        src.connect(f).connect(g).connect(audio.ctx.destination);
+        src.start();
+      }
+      const sfx = {
+        pickup: (combo) =>
+          tone(660 + combo * 90, 0.12, "square", 0.04, 1300 + combo * 120),
+        burn: () => tone(220, 0.25, "triangle", 0.05, 90),
+        hit: () => {
+          tone(140, 0.35, "sawtooth", 0.08, 50);
+          noise(0.2, 0.08);
+        },
+        flare: () => {
+          noise(0.45, 0.16);
+          tone(300, 0.5, "sine", 0.08, 1200);
+        },
+        start: () => {
+          tone(523, 0.12, "square", 0.05);
+          setTimeout(() => tone(784, 0.18, "square", 0.05), 110);
+        },
+        wave: () => tone(392, 0.4, "square", 0.05, 784),
+        over: () => tone(330, 1.1, "triangle", 0.08, 55),
+      };
+
+      // ---------- textures ----------
+      function glowTexture(inner, outer) {
+        const c = document.createElement("canvas");
+        c.width = c.height = 64;
+        const g = c.getContext("2d");
+        const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+        grad.addColorStop(0, inner);
+        grad.addColorStop(0.35, outer);
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        g.fillStyle = grad;
+        g.fillRect(0, 0, 64, 64);
+        return new THREE.CanvasTexture(c);
+      }
+      function floorTexture() {
+        const c = document.createElement("canvas");
+        c.width = c.height = 512;
+        const g = c.getContext("2d");
+        g.fillStyle = "#2b2638";
+        g.fillRect(0, 0, 512, 512);
+        for (let i = 0; i < 420; i++) {
+          const r = rand(3, 22);
+          g.fillStyle = `hsla(${rand(240, 285)}, 16%, ${rand(14, 30)}%, ${rand(0.4, 0.9)})`;
+          g.beginPath();
+          g.ellipse(
+            rand(0, 512),
+            rand(0, 512),
+            r,
+            r * rand(0.5, 0.9),
+            rand(0, 3.14),
+            0,
+            Math.PI * 2,
+          );
+          g.fill();
+        }
+        for (let i = 0; i < 90; i++) {
+          g.strokeStyle = `rgba(20, 16, 30, ${rand(0.3, 0.7)})`;
+          g.lineWidth = rand(1, 3);
+          g.beginPath();
+          const x = rand(0, 512);
+          const y = rand(0, 512);
+          g.moveTo(x, y);
+          g.quadraticCurveTo(
+            x + rand(-40, 40),
+            y + rand(-40, 40),
+            x + rand(-80, 80),
+            y + rand(-80, 80),
+          );
+          g.stroke();
+        }
+        const t = new THREE.CanvasTexture(c);
+        t.wrapS = t.wrapT = THREE.RepeatWrapping;
+        t.repeat.set(7, 7);
+        t.anisotropy = 4;
+        return t;
+      }
+
+      // ---------- three.js scene ----------
+      const stage = $("stage");
+      const renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        powerPreference: "high-performance",
+      });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.outputEncoding = THREE.sRGBEncoding;
+      stage.appendChild(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x020309);
+      scene.fog = new THREE.FogExp2(0x020309, 0.036);
+
+      const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200);
+      scene.add(new THREE.HemisphereLight(0x3a3070, 0x070510, 0.22));
+
+      const ground = new THREE.Mesh(
+        new THREE.CircleGeometry(CONFIG.arena.radius + 8, 72),
+        new THREE.MeshStandardMaterial({
+          map: floorTexture(),
+          roughness: 0.95,
+          metalness: 0,
+        }),
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      // jagged cave wall
+      {
+        const geo = new THREE.CylinderGeometry(
+          CONFIG.arena.radius + 1,
+          CONFIG.arena.radius + 2.5,
+          7,
+          64,
+          4,
+          true,
+        );
+        const pos = geo.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          const x = pos.getX(i);
+          const z = pos.getZ(i);
+          const k =
+            1 +
+            Math.sin(Math.atan2(z, x) * 9 + pos.getY(i)) * 0.03 +
+            rand(-0.03, 0.03);
+          pos.setX(i, x * k);
+          pos.setZ(i, z * k);
+        }
+        geo.computeVertexNormals();
+        const wall = new THREE.Mesh(
+          geo,
+          new THREE.MeshStandardMaterial({
+            color: 0x241f33,
+            roughness: 1,
+            flatShading: true,
+            side: THREE.BackSide,
+          }),
+        );
+        wall.position.y = 3.2;
+        wall.receiveShadow = true;
+        scene.add(wall);
+      }
+
+      // stalagmite pillars (obstacles that cast lantern shadows)
+      const pillars = [];
+      {
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0x3a3350,
+          roughness: 0.9,
+          flatShading: true,
+        });
+        let tries = 0;
+        while (pillars.length < CONFIG.arena.pillars && tries++ < 400) {
+          const a = rand(0, Math.PI * 2);
+          const d = rand(CONFIG.arena.safeCenter + 1, CONFIG.arena.radius - 3);
+          const x = Math.cos(a) * d;
+          const z = Math.sin(a) * d;
+          const r = rand(0.8, 1.5);
+          if (pillars.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + r + 4))
+            continue;
+          const h = rand(3, 6.5);
+          const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 7, 3), mat);
+          m.position.set(x, h / 2 - 0.1, z);
+          m.rotation.y = rand(0, 6);
+          m.castShadow = true;
+          m.receiveShadow = true;
+          scene.add(m);
+          pillars.push({ x, z, r: r * 0.85 });
+        }
+      }
+
+      // the player's lantern
+      const player = { x: 0, z: 0, vx: 0, vz: 0, mesh: new THREE.Group() };
+      {
+        const brass = new THREE.MeshStandardMaterial({
+          color: 0x8a5a24,
+          roughness: 0.4,
+          metalness: 0.7,
+        });
+        const glass = new THREE.MeshStandardMaterial({
+          color: 0xffc861,
+          emissive: 0xffa040,
+          emissiveIntensity: 2.2,
+          roughness: 0.2,
+        });
+        const core = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.32, 0.32, 0.62, 12),
+          glass,
+        );
+        const top = new THREE.Mesh(
+          new THREE.ConeGeometry(0.2, 0.22, 12),
+          brass,
+        );
+        top.position.y = 0.42;
+        const base = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.42, 0.38, 0.12, 12),
+          brass,
+        );
+        base.position.y = -0.36;
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(0.16, 0.035, 6, 16),
+          brass,
+        );
+        ring.position.y = 0.7;
+        player.mesh.add(core, top, base, ring);
+        player.mesh.position.y = 1;
+        scene.add(player.mesh);
+      }
+      const lantern = new THREE.PointLight(0xffa850, 2.4, 10, 1.2);
+      lantern.castShadow = true;
+      lantern.shadow.mapSize.set(512, 512);
+      lantern.shadow.camera.near = 0.3;
+      lantern.shadow.camera.far = 40;
+      lantern.shadow.bias = -0.004;
+      scene.add(lantern);
+
+      const radiusRing = new THREE.Mesh(
+        new THREE.RingGeometry(0.965, 1, 72),
+        new THREE.MeshBasicMaterial({
+          color: 0xffb84d,
+          transparent: true,
+          opacity: 0.35,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      radiusRing.rotation.x = -Math.PI / 2;
+      radiusRing.position.y = 0.03;
+      scene.add(radiusRing);
+
+      const fireflyTex = glowTexture(
+        "rgba(220,255,240,1)",
+        "rgba(90,240,200,0.55)",
+      );
+      const sparkTex = glowTexture(
+        "rgba(255,255,255,1)",
+        "rgba(255,255,255,0.35)",
+      );
+      const lanternGlow = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: glowTexture("rgba(255,230,170,1)", "rgba(255,150,60,0.5)"),
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      lanternGlow.scale.set(3.2, 3.2, 1);
+      scene.add(lanternGlow);
+
+      const flareRing = new THREE.Mesh(
+        new THREE.RingGeometry(0.9, 1, 72),
+        new THREE.MeshBasicMaterial({
+          color: 0xffd27a,
+          transparent: true,
+          opacity: 0,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        }),
+      );
+      flareRing.rotation.x = -Math.PI / 2;
+      flareRing.position.y = 0.2;
+      scene.add(flareRing);
+
+      const wispGeo = new THREE.IcosahedronGeometry(CONFIG.wisp.radius, 1);
+      const eyeGeo = new THREE.SphereGeometry(0.1, 8, 6);
+
+      // particles: one Points cloud backed by typed arrays
+      const P = {
+        n: 0,
+        pos: new Float32Array(CONFIG.maxParticles * 3),
+        col: new Float32Array(CONFIG.maxParticles * 3),
+        vel: new Float32Array(CONFIG.maxParticles * 3),
+        base: new Float32Array(CONFIG.maxParticles * 3),
+        life: new Float32Array(CONFIG.maxParticles),
+        max: new Float32Array(CONFIG.maxParticles),
+      };
+      const pGeo = new THREE.BufferGeometry();
+      pGeo.setAttribute("position", new THREE.BufferAttribute(P.pos, 3));
+      pGeo.setAttribute("color", new THREE.BufferAttribute(P.col, 3));
+      const points = new THREE.Points(
+        pGeo,
+        new THREE.PointsMaterial({
+          size: 0.35,
+          map: sparkTex,
+          vertexColors: true,
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      points.frustumCulled = false;
+      scene.add(points);
+
+      const COLORS = {
+        ember: new THREE.Color(0xffa040),
+        firefly: new THREE.Color(0x7dffd2),
+        shadow: new THREE.Color(0xb070ff),
+        white: new THREE.Color(0xfff2d0),
+      };
+
+      function burst(x, y, z, n, color, speed, life) {
+        for (let k = 0; k < n && P.n < CONFIG.maxParticles; k++) {
+          const i = P.n++;
+          const a = rand(0, Math.PI * 2);
+          const e = rand(-0.4, 1);
+          const s = rand(speed * 0.25, speed);
+          P.pos.set([x, y, z], i * 3);
+          P.vel.set([Math.cos(a) * s, e * s * 0.8, Math.sin(a) * s], i * 3);
+          P.base.set([color.r, color.g, color.b], i * 3);
+          P.life[i] = P.max[i] = rand(life * 0.5, life);
+        }
+      }
+
+      function updateParticles(dt) {
+        for (let i = 0; i < P.n; i++) {
+          P.life[i] -= dt;
+          if (P.life[i] <= 0) {
+            const last = --P.n;
+            for (const arr of [P.pos, P.vel, P.base])
+              arr.copyWithin(i * 3, last * 3, last * 3 + 3);
+            P.life[i] = P.life[last];
+            P.max[i] = P.max[last];
+            i--;
+            continue;
+          }
+          const drag = 1 - 2.2 * dt;
+          P.vel[i * 3] *= drag;
+          P.vel[i * 3 + 1] = P.vel[i * 3 + 1] * drag - 3 * dt;
+          P.vel[i * 3 + 2] *= drag;
+          P.pos[i * 3] += P.vel[i * 3] * dt;
+          P.pos[i * 3 + 1] = Math.max(
+            0.05,
+            P.pos[i * 3 + 1] + P.vel[i * 3 + 1] * dt,
+          );
+          P.pos[i * 3 + 2] += P.vel[i * 3 + 2] * dt;
+          const f = P.life[i] / P.max[i];
+          P.col[i * 3] = P.base[i * 3] * f;
+          P.col[i * 3 + 1] = P.base[i * 3 + 1] * f;
+          P.col[i * 3 + 2] = P.base[i * 3 + 2] * f;
+        }
+        pGeo.setDrawRange(0, P.n);
+        pGeo.attributes.position.needsUpdate = true;
+        pGeo.attributes.color.needsUpdate = true;
+      }
+
+      // ---------- game state ----------
+      const game = {
+        state: "title", // title | play | paused | over
+        time: 0,
+        score: 0,
+        best: readBest(),
+        light: CONFIG.light.start,
+        flareCd: 0,
+        fireflyTimer: 0,
+        wispTimer: 1.2,
+        shake: 0,
+        flash: 0,
+        kills: 0,
+        combo: 1,
+        comboTimer: 0,
+        maxCombo: 1,
+        wave: 1,
+        newBest: false,
+        flareFx: { r: 0, max: 0, life: 0 },
+        fireflies: [],
+        wisps: [],
+      };
+      const input = {
+        keys: new Set(),
+        pointer: {
+          ndcX: 0,
+          ndcY: 0,
+          active: false,
+          down: false,
+          type: "mouse",
+        },
+      };
+
+      function addScore(base, x, z, color) {
+        const pts = Math.round(base * game.combo);
+        game.score += pts;
+        popup(`+${pts}${game.combo > 1 ? ` ×${game.combo}` : ""}`, x, z, color);
+      }
+      function bumpCombo() {
+        game.combo = Math.min(
+          CONFIG.combo.max,
+          game.comboTimer > 0 ? game.combo + 1 : 1,
+        );
+        game.comboTimer = CONFIG.combo.window;
+        game.maxCombo = Math.max(game.maxCombo, game.combo);
+        const el = $("combo");
+        el.classList.remove("bump");
+        void el.offsetWidth;
+        el.classList.add("bump");
+      }
+
+      function clearEntities() {
+        for (const f of game.fireflies) scene.remove(f.sprite);
+        for (const w of game.wisps) disposeWisp(w);
+        game.fireflies = [];
+        game.wisps = [];
+        P.n = 0;
+      }
+
+      function resetRun() {
+        clearEntities();
+        Object.assign(game, {
+          time: 0,
+          score: 0,
+          light: CONFIG.light.start,
+          flareCd: 0,
+          fireflyTimer: 0,
+          wispTimer: 1.2,
+          shake: 0,
+          flash: 0,
+          kills: 0,
+          combo: 1,
+          comboTimer: 0,
+          maxCombo: 1,
+          wave: 1,
+          newBest: false,
+        });
+        Object.assign(player, { x: 0, z: 0, vx: 0, vz: 0 });
+        for (let i = 0; i < 4; i++) spawnFirefly();
+      }
+
+      function setState(s) {
+        game.state = s;
+        $("titleScreen").hidden = s !== "title";
+        $("pauseScreen").hidden = s !== "paused";
+        $("overScreen").hidden = s !== "over";
+        const hud = s === "play" || s === "paused";
+        $("hudLeft").hidden = !hud;
+        $("hudRight").hidden = !hud;
+        $("flareBtn").hidden = !(coarsePointer && s === "play");
+      }
+
+      function startRun() {
+        ensureAudio();
+        resetRun();
+        setState("play");
+        showBanner("WAVE 1");
+        sfx.start();
+      }
+
+      function endRun() {
+        game.score = Math.floor(game.score);
+        if (game.score > game.best) {
+          game.best = game.score;
+          game.newBest = true;
+          writeBest(game.best);
+        }
+        burst(player.x, 1, player.z, 80, COLORS.ember, 9, 1.4);
+        $("finalScore").textContent = String(game.score);
+        $("finalMeta").textContent =
+          `생존 ${formatTime(game.time)} · WAVE ${game.wave} · 그림자 ${game.kills} · 최대 콤보 ×${game.maxCombo} · 최고 ${game.best}`;
+        $("newBest").hidden = !game.newBest;
+        clearTimeout(bannerTimer);
+        $("banner").classList.remove("show");
+        setState("over");
+        sfx.over();
+      }
+
+      let bannerTimer = 0;
+      function showBanner(text) {
+        const b = $("banner");
+        b.textContent = text;
+        b.classList.add("show");
+        clearTimeout(bannerTimer);
+        bannerTimer = setTimeout(() => b.classList.remove("show"), 1400);
+      }
+
+      // ---------- popups (DOM text anchored to world points) ----------
+      const popups = [];
+      const tmpV = new THREE.Vector3();
+      function popup(text, x, z, color) {
+        const el = document.createElement("div");
+        el.className = "popup";
+        el.textContent = text;
+        el.style.color = color;
+        document.body.appendChild(el);
+        popups.push({ el, x, z, y: 1.4, life: 0.9 });
+      }
+      function updatePopups(dt) {
+        for (let i = popups.length - 1; i >= 0; i--) {
+          const p = popups[i];
+          p.life -= dt;
+          p.y += dt * 1.6;
+          if (p.life <= 0) {
+            p.el.remove();
+            popups.splice(i, 1);
+            continue;
+          }
+          tmpV.set(p.x, p.y, p.z).project(camera);
+          const sx = (tmpV.x * 0.5 + 0.5) * window.innerWidth;
+          const sy = (-tmpV.y * 0.5 + 0.5) * window.innerHeight;
+          p.el.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -50%)`;
+          p.el.style.opacity = String(Math.min(1, p.life * 2.5));
+        }
+      }
+
+      // ---------- spawning ----------
+      function freeSpot(minFromPlayer, maxR) {
+        for (let t = 0; t < 30; t++) {
+          const a = rand(0, Math.PI * 2);
+          const d = Math.sqrt(Math.random()) * maxR;
+          const x = Math.cos(a) * d;
+          const z = Math.sin(a) * d;
+          if (Math.hypot(x - player.x, z - player.z) < minFromPlayer) continue;
+          if (pillars.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + 1))
+            continue;
+          return { x, z };
+        }
+        return { x: -player.x * 0.5, z: -player.z * 0.5 };
+      }
+
+      function spawnFirefly() {
+        const { x, z } = freeSpot(5, CONFIG.arena.radius - 2);
+        const sprite = new THREE.Sprite(
+          new THREE.SpriteMaterial({
+            map: fireflyTex,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+          }),
+        );
+        sprite.scale.set(1.1, 1.1, 1);
+        scene.add(sprite);
+        game.fireflies.push({
+          x,
+          z,
+          vx: rand(-1, 1),
+          vz: rand(-1, 1),
+          phase: rand(0, 6.28),
+          life: CONFIG.firefly.life,
+          sprite,
+        });
+      }
+
+      function spawnWisp() {
+        let a = rand(0, Math.PI * 2);
+        const R = CONFIG.arena.radius - 1.5;
+        for (
+          let t = 0;
+          t < 10 &&
+          Math.hypot(Math.cos(a) * R - player.x, Math.sin(a) * R - player.z) <
+            10;
+          t++
+        ) {
+          a = rand(0, Math.PI * 2);
+        }
+        const bodyMat = new THREE.MeshStandardMaterial({
+          color: 0x07040c,
+          emissive: 0x100318,
+          emissiveIntensity: 0.4,
+          roughness: 1,
+          flatShading: true,
+        });
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0xc58bff });
+        const mesh = new THREE.Group();
+        const body = new THREE.Mesh(wispGeo, bodyMat);
+        body.castShadow = true;
+        const e1 = new THREE.Mesh(eyeGeo, eyeMat);
+        const e2 = new THREE.Mesh(eyeGeo, eyeMat);
+        e1.position.set(-0.22, 0.12, 0.6);
+        e2.position.set(0.22, 0.12, 0.6);
+        mesh.add(body, e1, e2);
+        const scale = rand(0.85, 1.3);
+        mesh.scale.setScalar(scale);
+        scene.add(mesh);
+        game.wisps.push({
+          x: Math.cos(a) * R,
+          z: Math.sin(a) * R,
+          hp: 1,
+          wobble: rand(0, 6.28),
+          scale,
+          rise: 0,
+          mesh,
+          body,
+          bodyMat,
+          eyeMat,
+        });
+        burst(Math.cos(a) * R, 0.3, Math.sin(a) * R, 10, COLORS.shadow, 3, 0.7);
+      }
+
+      function disposeWisp(w) {
+        scene.remove(w.mesh);
+        w.bodyMat.dispose();
+        w.eyeMat.dispose();
+      }
+
+      // ---------- collisions ----------
+      function pushOut(o, r, keepInArena) {
+        for (const p of pillars) {
+          const dx = o.x - p.x;
+          const dz = o.z - p.z;
+          const min = r + p.r;
+          const d2 = dx * dx + dz * dz;
+          if (d2 < min * min) {
+            const d = Math.sqrt(d2) || 0.001;
+            o.x = p.x + (dx / d) * min;
+            o.z = p.z + (dz / d) * min;
+          }
+        }
+        if (keepInArena) {
+          const lim = CONFIG.arena.radius - r;
+          const d = Math.hypot(o.x, o.z);
+          if (d > lim) {
+            o.x *= lim / d;
+            o.z *= lim / d;
+          }
+        }
+      }
+
+      // ---------- actions ----------
+      function flare() {
+        if (game.state !== "play" || game.flareCd > 0) return;
+        const cfg = CONFIG.flare;
+        if (game.light <= cfg.cost + 4) {
+          tone(120, 0.12, "square", 0.04);
+          return;
+        }
+        const r = lightRadius(game.light) * cfg.radiusMul + cfg.radiusAdd;
+        game.light -= cfg.cost;
+        game.flareCd = cfg.cooldown;
+        game.flash = 1;
+        game.shake = Math.max(game.shake, CONFIG.shake.flare);
+        game.flareFx = { r: 0.5, max: r, life: 0.5 };
+        let killed = 0;
+        game.wisps = game.wisps.filter((w) => {
+          if (Math.hypot(w.x - player.x, w.z - player.z) < r) {
+            burst(w.x, 0.9, w.z, 22, COLORS.shadow, 7, 0.9);
+            bumpCombo();
+            addScore(cfg.score, w.x, w.z, "#c58bff");
+            disposeWisp(w);
+            killed++;
+            return false;
+          }
+          return true;
+        });
+        game.kills += killed;
+        burst(player.x, 1, player.z, 70, COLORS.ember, 14, 0.8);
+        sfx.flare();
+      }
+
+      // ---------- update ----------
+      const raycaster = new THREE.Raycaster();
+      const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+      const hit = new THREE.Vector3();
+      const ndc = new THREE.Vector2();
+
+      function update(dt) {
+        updateParticles(dt);
+        updatePopups(dt);
+        game.flareFx.life = Math.max(0, game.flareFx.life - dt);
+        game.flareFx.r +=
+          (game.flareFx.max - game.flareFx.r) * (1 - Math.exp(-12 * dt));
+        game.shake = Math.max(0, game.shake - CONFIG.shake.decay * dt);
+        if (game.state !== "play") return;
+
+        game.time += dt;
+        game.score += CONFIG.score.perSecond * dt;
+        game.flareCd = Math.max(0, game.flareCd - dt);
+        game.flash = Math.max(0, game.flash - dt * 2.5);
+        game.comboTimer -= dt;
+        if (game.comboTimer <= 0) game.combo = 1;
+
+        const wave = 1 + Math.floor(game.time / CONFIG.wave.every);
+        if (wave !== game.wave) {
+          game.wave = wave;
+          showBanner(`WAVE ${wave}`);
+          sfx.wave();
+        }
+
+        const L = CONFIG.light;
+        game.light -=
+          (L.decayPerSec + L.decayRampPerMin * (game.time / 60)) * dt;
+
+        updatePlayer(dt);
+        updateFireflies(dt);
+        updateWisps(dt);
+
+        game.light = clamp(game.light, 0, L.max);
+        if (game.light <= 0) endRun();
+      }
+
+      function updatePlayer(dt) {
+        const k = input.keys;
+        let dx =
+          (k.has("ArrowRight") || k.has("KeyD") ? 1 : 0) -
+          (k.has("ArrowLeft") || k.has("KeyA") ? 1 : 0);
+        let dz =
+          (k.has("ArrowDown") || k.has("KeyS") ? 1 : 0) -
+          (k.has("ArrowUp") || k.has("KeyW") ? 1 : 0);
+        let speedMul = 1;
+        const usePointer =
+          input.pointer.active &&
+          (input.pointer.type === "mouse" || input.pointer.down);
+        if (dx || dz) {
+          input.pointer.active = false;
+        } else if (usePointer) {
+          ndc.set(input.pointer.ndcX, input.pointer.ndcY);
+          raycaster.setFromCamera(ndc, camera);
+          if (raycaster.ray.intersectPlane(groundPlane, hit)) {
+            dx = hit.x - player.x;
+            dz = hit.z - player.z;
+            speedMul = clamp(
+              Math.hypot(dx, dz) / CONFIG.player.followDist,
+              0,
+              1,
+            );
+          }
+        }
+        const len = Math.hypot(dx, dz);
+        const tvx =
+          len > 0.05 ? (dx / len) * CONFIG.player.speed * speedMul : 0;
+        const tvz =
+          len > 0.05 ? (dz / len) * CONFIG.player.speed * speedMul : 0;
+        const ease = 1 - Math.exp(-12 * dt);
+        player.vx += (tvx - player.vx) * ease;
+        player.vz += (tvz - player.vz) * ease;
+        player.x += player.vx * dt;
+        player.z += player.vz * dt;
+        pushOut(player, CONFIG.player.radius, true);
+        if (Math.random() < dt * 25)
+          burst(player.x, 1.3, player.z, 1, COLORS.ember, 0.8, 0.7);
+      }
+
+      function updateFireflies(dt) {
+        const cfg = CONFIG.firefly;
+        game.fireflyTimer -= dt;
+        if (game.fireflyTimer <= 0 && game.fireflies.length < cfg.maxOnField) {
+          spawnFirefly();
+          game.fireflyTimer = cfg.spawnEvery;
+        }
+        const reach = cfg.pickupRadius + CONFIG.player.radius;
+        game.fireflies = game.fireflies.filter((f) => {
+          f.phase += dt * 3;
+          f.life -= dt;
+          f.vx = clamp(f.vx + rand(-3, 3) * dt, -1.6, 1.6);
+          f.vz = clamp(f.vz + rand(-3, 3) * dt, -1.6, 1.6);
+          f.x += f.vx * dt;
+          f.z += f.vz * dt;
+          pushOut(f, 0.3, true);
+          if (Math.hypot(f.x - player.x, f.z - player.z) < reach) {
+            game.light += cfg.restore;
+            bumpCombo();
+            addScore(cfg.score, f.x, f.z, "#7dffd2");
+            burst(f.x, 1, f.z, 16, COLORS.firefly, 5, 0.7);
+            sfx.pickup(game.combo);
+            scene.remove(f.sprite);
+            return false;
+          }
+          if (f.life <= 0) {
+            scene.remove(f.sprite);
+            return false;
+          }
+          return true;
+        });
+      }
+
+      function updateWisps(dt) {
+        const cfg = CONFIG.wisp;
+        const m = game.time / 60;
+        game.wispTimer -= dt;
+        if (game.wispTimer <= 0) {
+          spawnWisp();
+          if (m > 1.5 && Math.random() < 0.25) spawnWisp();
+          game.wispTimer =
+            Math.max(cfg.spawnMin, cfg.spawnStart - cfg.spawnRampPerMin * m) *
+            rand(0.7, 1.3);
+        }
+        const radius = lightRadius(game.light);
+        game.wisps = game.wisps.filter((w) => {
+          w.wobble += dt * 4;
+          w.rise = Math.min(1, w.rise + dt * 2);
+          const d = Math.hypot(w.x - player.x, w.z - player.z) || 0.001;
+          const inLight = d < radius;
+          const depth = inLight ? 1 - d / radius : 0;
+          const speed =
+            (cfg.speedDark + cfg.speedRampPerMin * m) *
+            (inLight ? cfg.lightSlow : 1) *
+            (1 / w.scale) *
+            w.rise;
+          const nx = (player.x - w.x) / d;
+          const nz = (player.z - w.z) / d;
+          w.x += (nx + Math.cos(w.wobble) * 0.35 * -nz) * speed * dt;
+          w.z += (nz + Math.sin(w.wobble) * 0.35 * nx) * speed * dt;
+          pushOut(w, cfg.radius * w.scale * 0.8, false);
+          w.inLight = inLight;
+          if (inLight) {
+            w.hp -= cfg.burnPerSec * (0.4 + depth * 1.6) * dt;
+            if (Math.random() < dt * 25)
+              burst(w.x, 1, w.z, 1, COLORS.shadow, 1.5, 0.6);
+          }
+          if (w.hp <= 0) {
+            game.kills++;
+            bumpCombo();
+            addScore(cfg.burnScore, w.x, w.z, "#c58bff");
+            burst(w.x, 1, w.z, 22, COLORS.shadow, 6, 0.8);
+            sfx.burn();
+            disposeWisp(w);
+            return false;
+          }
+          if (d < (cfg.radius + CONFIG.player.radius) * w.scale) {
+            game.light -= cfg.contactDrain;
+            game.combo = 1;
+            game.comboTimer = 0;
+            game.shake = Math.max(game.shake, CONFIG.shake.hit);
+            popup(`-${cfg.contactDrain} LIGHT`, player.x, player.z, "#ff6a4d");
+            burst(player.x, 1, player.z, 30, COLORS.shadow, 8, 0.7);
+            sfx.hit();
+            disposeWisp(w);
+            return false;
+          }
+          return true;
+        });
+      }
+
+      // ---------- render ----------
+      const camPos = new THREE.Vector3(
+        0,
+        CONFIG.camera.height,
+        CONFIG.camera.back,
+      );
+      function syncScene(now) {
+        const t = now / 1000;
+        const live = game.state === "play" || game.state === "paused";
+        const lightVal =
+          game.state === "title"
+            ? 60 + Math.sin(t * 1.2) * 8
+            : game.state === "over"
+              ? 0
+              : game.light;
+        const r = lightRadius(lightVal);
+        const flicker = Math.sin(t * 14) * 0.15 + Math.sin(t * 27) * 0.1;
+        const bob = Math.sin(t * 4) * 0.08;
+
+        player.mesh.visible = game.state !== "over";
+        player.mesh.position.set(player.x, 1 + bob, player.z);
+        player.mesh.rotation.y = Math.atan2(player.vx, player.vz) * 0.2;
+        player.mesh.rotation.z = clamp(-player.vx * 0.02, -0.25, 0.25);
+        player.mesh.rotation.x = clamp(player.vz * 0.02, -0.25, 0.25);
+        lantern.position.set(player.x, 1.3 + bob, player.z);
+        lantern.distance = Math.max(
+          0.01,
+          r * CONFIG.light.visualReach + flicker + game.flash * 14,
+        );
+        lantern.intensity =
+          game.state === "over" ? 0 : 2.4 + flicker + game.flash * 5;
+        lanternGlow.position.copy(lantern.position);
+        lanternGlow.visible = game.state !== "over";
+        radiusRing.visible = live;
+        radiusRing.position.x = player.x;
+        radiusRing.position.z = player.z;
+        radiusRing.scale.setScalar(r);
+        radiusRing.material.opacity =
+          game.light / CONFIG.light.max < 0.25
+            ? 0.25 + Math.sin(t * 12) * 0.2
+            : 0.3;
+
+        flareRing.position.x = player.x;
+        flareRing.position.z = player.z;
+        flareRing.scale.setScalar(game.flareFx.r);
+        flareRing.material.opacity = game.flareFx.life * 1.6;
+
+        for (const f of game.fireflies) {
+          const fade = Math.min(1, f.life / 2);
+          f.sprite.position.set(f.x, 0.8 + Math.sin(f.phase) * 0.25, f.z);
+          f.sprite.material.opacity =
+            (0.65 + Math.sin(f.phase * 1.7) * 0.35) * fade;
+        }
+        for (const w of game.wisps) {
+          w.mesh.position.set(
+            w.x,
+            -0.6 + w.rise * 1.6 + Math.sin(w.wobble) * 0.15,
+            w.z,
+          );
+          w.mesh.lookAt(player.x, w.mesh.position.y, player.z);
+          w.body.rotation.z += 0.03;
+          const s = w.scale * (0.55 + 0.45 * Math.max(0, w.hp));
+          w.mesh.scale.setScalar(s);
+          w.eyeMat.color.setHex(w.inLight ? 0xff7ae6 : 0xc58bff);
+          w.bodyMat.emissiveIntensity = w.inLight
+            ? 0.3 + Math.random() * 0.6
+            : 0.4;
+          w.bodyMat.emissive.setHex(w.inLight ? 0x2c0a3c : 0x100318);
+        }
+
+        // arcade camera: high angle chase with portrait boost and shake
+        const aspect = window.innerWidth / window.innerHeight;
+        const boost = aspect < 1 ? CONFIG.camera.portraitBoost : 1;
+        const focusX =
+          game.state === "title" ? Math.sin(t * 0.15) * 4 : player.x;
+        const focusZ =
+          game.state === "title" ? Math.cos(t * 0.15) * 4 : player.z;
+        const target = new THREE.Vector3(
+          focusX,
+          CONFIG.camera.height * boost,
+          focusZ + CONFIG.camera.back * boost,
+        );
+        camPos.lerp(target, 0.08);
+        camera.position.copy(camPos);
+        if (game.shake > 0 && !reducedMotion) {
+          camera.position.x += rand(-game.shake, game.shake);
+          camera.position.y += rand(-game.shake, game.shake) * 0.5;
+        }
+        camera.lookAt(camPos.x, 0, camPos.z - CONFIG.camera.back * boost);
+      }
+
+      function renderHud() {
+        if (game.state !== "play" && game.state !== "paused") return;
+        const frac = game.light / CONFIG.light.max;
+        const fill = $("lightFill");
+        fill.style.width = `${frac * 100}%`;
+        fill.classList.toggle("low", frac < 0.25);
+        $("lightCost").style.left =
+          `${(CONFIG.flare.cost / CONFIG.light.max) * 100}%`;
+        const ready = game.flareCd <= 0 && game.light > CONFIG.flare.cost + 4;
+        const fs = $("flareStatus");
+        fs.textContent = ready
+          ? coarsePointer
+            ? "✦ 플레어 준비 — 버튼"
+            : "✦ 플레어 준비 — Space · 우클릭"
+          : "플레어 충전 중…";
+        fs.classList.toggle("ready", ready);
+        $("flareBtn").disabled = !ready;
+        $("score").textContent = String(Math.floor(game.score));
+        $("meta").textContent =
+          `WAVE ${game.wave} · ${formatTime(game.time)} · HI ${game.best}${audio.muted ? " · 음소거" : ""}`;
+        $("combo").textContent = game.combo > 1 ? `×${game.combo} COMBO` : "";
+      }
+
+      function formatTime(t) {
+        const s = Math.floor(t);
+        return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+      }
+
+      function resize() {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        renderer.setSize(w, h, false);
+        camera.aspect = w / h;
+        camera.fov = w / h < 1 ? 62 : 50;
+        camera.updateProjectionMatrix();
+      }
+
+      // ---------- input ----------
+      function togglePause() {
+        if (game.state === "play") setState("paused");
+        else if (game.state === "paused") setState("play");
+      }
+      function primaryAction() {
+        if (game.state === "title" || game.state === "over") startRun();
+        else if (game.state === "paused") setState("play");
+      }
+
+      window.addEventListener("keydown", (e) => {
+        if (
+          ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(
+            e.code,
+          )
+        )
+          e.preventDefault();
+        if (e.repeat) return;
+        input.keys.add(e.code);
+        ensureAudio();
+        if (e.code === "Enter") primaryAction();
+        else if (e.code === "Space")
+          game.state === "play" ? flare() : primaryAction();
+        else if (e.code === "KeyR" && game.state === "over") startRun();
+        else if (e.code === "KeyP" || e.code === "Escape") togglePause();
+        else if (e.code === "KeyM") audio.muted = !audio.muted;
+      });
+      window.addEventListener("keyup", (e) => input.keys.delete(e.code));
+      window.addEventListener("blur", () => {
+        input.keys.clear();
+        if (game.state === "play") setState("paused");
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden && game.state === "play") setState("paused");
+      });
+
+      for (const id of ["titleScreen", "pauseScreen", "overScreen"]) {
+        $(id).addEventListener("pointerdown", (e) => {
+          e.preventDefault();
+          primaryAction();
+        });
+      }
+      function setPointer(e) {
+        input.pointer.ndcX = (e.clientX / window.innerWidth) * 2 - 1;
+        input.pointer.ndcY = -(e.clientY / window.innerHeight) * 2 + 1;
+        input.pointer.type = e.pointerType;
+      }
+      const cv = renderer.domElement;
+      cv.addEventListener("contextmenu", (e) => e.preventDefault());
+      cv.addEventListener("pointermove", (e) => {
+        setPointer(e);
+        if (game.state === "play") input.pointer.active = true;
+      });
+      cv.addEventListener("pointerdown", (e) => {
+        setPointer(e);
+        input.pointer.down = true;
+        input.pointer.active = true;
+        ensureAudio();
+        if (e.button === 2) flare();
+      });
+      window.addEventListener("pointerup", () => (input.pointer.down = false));
+      cv.addEventListener("pointerleave", () => {
+        if (input.pointer.type === "mouse") input.pointer.active = false;
+      });
+      $("flareBtn").addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        flare();
+      });
+
+      // ---------- loop ----------
+      let last = performance.now();
+      function frame(now) {
+        const dt = Math.min(1 / 30, (now - last) / 1000);
+        last = now;
+        update(dt);
+        syncScene(now);
+        renderHud();
+        renderer.render(scene, camera);
+        requestAnimationFrame(frame);
+      }
+
+      window.addEventListener("resize", resize);
+      resize();
+      setState("title");
+      requestAnimationFrame(frame);
+
+      // Test seam for automated run-and-observe checks.
+      window.__lantern = {
+        game,
+        CONFIG,
+        player,
+        pillars,
+        startRun,
+        flare,
+        update,
+        lightRadius,
+        spawnWisp,
+      };
+    </script>
+  </body>
+</html>
