@@ -1,0 +1,941 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <title>Lantern Drift</title>
+    <style>
+      :root {
+        --bg: #04050c;
+        --ink: #f3e6c8;
+        --amber: #ffb84d;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        overflow: hidden;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        cursor: crosshair;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game" aria-label="Lantern Drift 게임 화면"></canvas>
+    <script>
+      "use strict";
+
+      /** All tuning values live here (data-driven gameplay). */
+      const CONFIG = {
+        player: { speed: 270, size: 11, followEase: 90 },
+        light: {
+          max: 100,
+          start: 72,
+          decayPerSec: 2.1,
+          decayRampPerMin: 1.2,
+          radiusMin: 46,
+          radiusPerPoint: 2.15,
+          flicker: 5,
+        },
+        firefly: {
+          maxOnField: 7,
+          spawnEvery: 1.05,
+          restore: 9,
+          score: 10,
+          pickupRadius: 20,
+          life: 14,
+        },
+        wisp: {
+          spawnStart: 2.3,
+          spawnMin: 0.42,
+          spawnRampPerMin: 0.9,
+          speedDark: 115,
+          speedRampPerMin: 40,
+          lightSlow: 0.42,
+          burnPerSec: 0.85,
+          contactDrain: 22,
+          burnScore: 15,
+          radius: 13,
+        },
+        flare: {
+          cost: 18,
+          cooldown: 1.4,
+          radiusMul: 1.5,
+          radiusAdd: 90,
+          score: 25,
+        },
+        score: { perSecond: 5 },
+        shake: { hit: 14, flare: 9, decay: 40 },
+        maxParticles: 500,
+      };
+
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const dark = document.createElement("canvas");
+      const dctx = dark.getContext("2d");
+      const floor = document.createElement("canvas");
+      const fctx = floor.getContext("2d");
+      const reducedMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+
+      let W = 0;
+      let H = 0;
+      let DPR = 1;
+
+      const game = {
+        state: "title", // title | play | paused | over
+        time: 0,
+        score: 0,
+        best: readBest(),
+        light: CONFIG.light.start,
+        flareCd: 0,
+        fireflyTimer: 0,
+        wispTimer: 1.2,
+        shake: 0,
+        flash: 0,
+        kills: 0,
+        newBest: false,
+        player: { x: 0, y: 0, vx: 0, vy: 0 },
+        fireflies: [],
+        wisps: [],
+        particles: [],
+        rings: [],
+      };
+
+      const input = {
+        keys: new Set(),
+        pointer: { x: 0, y: 0, active: false },
+        lastTap: 0,
+      };
+
+      // ---------- utilities ----------
+      const rand = (a, b) => a + Math.random() * (b - a);
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+      const dist2 = (ax, ay, bx, by) => (ax - bx) ** 2 + (ay - by) ** 2;
+
+      function readBest() {
+        try {
+          return Number(localStorage.getItem("lantern-drift-best")) || 0;
+        } catch {
+          return 0;
+        }
+      }
+      function writeBest(v) {
+        try {
+          localStorage.setItem("lantern-drift-best", String(v));
+        } catch {
+          /* storage unavailable: best score lives for this session only */
+        }
+      }
+
+      /** Light radius in CSS pixels for a given light value. */
+      function lightRadius(light) {
+        return CONFIG.light.radiusMin + light * CONFIG.light.radiusPerPoint;
+      }
+      function minutes() {
+        return game.time / 60;
+      }
+
+      // ---------- audio ----------
+      const audio = { ctx: null, muted: false };
+      function ensureAudio() {
+        if (audio.ctx) return;
+        try {
+          audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch {
+          audio.ctx = null;
+        }
+      }
+      function tone(freq, dur, type = "sine", vol = 0.08, slideTo = null) {
+        if (!audio.ctx || audio.muted) return;
+        const t = audio.ctx.currentTime;
+        const o = audio.ctx.createOscillator();
+        const g = audio.ctx.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(freq, t);
+        if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+        g.gain.setValueAtTime(vol, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        o.connect(g).connect(audio.ctx.destination);
+        o.start(t);
+        o.stop(t + dur + 0.02);
+      }
+      function noise(dur, vol = 0.12) {
+        if (!audio.ctx || audio.muted) return;
+        const len = Math.floor(audio.ctx.sampleRate * dur);
+        const buf = audio.ctx.createBuffer(1, len, audio.ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < len; i++)
+          data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+        const src = audio.ctx.createBufferSource();
+        const g = audio.ctx.createGain();
+        const f = audio.ctx.createBiquadFilter();
+        f.type = "lowpass";
+        f.frequency.value = 1400;
+        g.gain.value = vol;
+        src.buffer = buf;
+        src.connect(f).connect(g).connect(audio.ctx.destination);
+        src.start();
+      }
+      const sfx = {
+        pickup: () => tone(rand(880, 1100), 0.12, "sine", 0.07, 1500),
+        burn: () => tone(220, 0.25, "triangle", 0.05, 90),
+        hit: () => {
+          tone(140, 0.35, "sawtooth", 0.08, 50);
+          noise(0.2, 0.08);
+        },
+        flare: () => {
+          noise(0.45, 0.16);
+          tone(300, 0.5, "sine", 0.08, 1200);
+        },
+        start: () => tone(440, 0.3, "sine", 0.06, 880),
+        over: () => tone(330, 1.1, "triangle", 0.08, 55),
+      };
+
+      // ---------- setup ----------
+      function resize() {
+        DPR = Math.min(window.devicePixelRatio || 1, 2);
+        const rx = W ? game.player.x / W : 0.5;
+        const ry = H ? game.player.y / H : 0.5;
+        W = window.innerWidth;
+        H = window.innerHeight;
+        for (const c of [canvas, dark, floor]) {
+          c.width = Math.floor(W * DPR);
+          c.height = Math.floor(H * DPR);
+        }
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        dctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        fctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        paintFloor();
+        game.player.x = clamp(
+          rx * W,
+          CONFIG.player.size,
+          W - CONFIG.player.size,
+        );
+        game.player.y = clamp(
+          ry * H,
+          CONFIG.player.size,
+          H - CONFIG.player.size,
+        );
+      }
+
+      /** Pre-render the cave floor once per resize. */
+      function paintFloor() {
+        const g = fctx.createRadialGradient(
+          W / 2,
+          H / 2,
+          0,
+          W / 2,
+          H / 2,
+          Math.hypot(W, H) / 2,
+        );
+        g.addColorStop(0, "#1d1a2b");
+        g.addColorStop(1, "#0b0a14");
+        fctx.fillStyle = g;
+        fctx.fillRect(0, 0, W, H);
+        const count = Math.floor((W * H) / 2600);
+        for (let i = 0; i < count; i++) {
+          const x = Math.random() * W;
+          const y = Math.random() * H;
+          const r = rand(2, 16);
+          fctx.fillStyle = `hsla(${rand(240, 280)}, 18%, ${rand(14, 26)}%, ${rand(0.4, 0.9)})`;
+          fctx.beginPath();
+          fctx.ellipse(
+            x,
+            y,
+            r,
+            r * rand(0.5, 0.9),
+            rand(0, Math.PI),
+            0,
+            Math.PI * 2,
+          );
+          fctx.fill();
+        }
+        for (let i = 0; i < count / 4; i++) {
+          fctx.strokeStyle = `rgba(120, 110, 160, ${rand(0.05, 0.15)})`;
+          fctx.lineWidth = rand(0.5, 1.5);
+          fctx.beginPath();
+          const x = Math.random() * W;
+          const y = Math.random() * H;
+          fctx.moveTo(x, y);
+          fctx.quadraticCurveTo(
+            x + rand(-30, 30),
+            y + rand(-30, 30),
+            x + rand(-60, 60),
+            y + rand(-60, 60),
+          );
+          fctx.stroke();
+        }
+      }
+
+      function resetRun() {
+        Object.assign(game, {
+          time: 0,
+          score: 0,
+          light: CONFIG.light.start,
+          flareCd: 0,
+          fireflyTimer: 0,
+          wispTimer: 1.2,
+          shake: 0,
+          flash: 0,
+          kills: 0,
+          newBest: false,
+          fireflies: [],
+          wisps: [],
+          particles: [],
+          rings: [],
+        });
+        game.player.x = W / 2;
+        game.player.y = H / 2;
+        game.player.vx = 0;
+        game.player.vy = 0;
+        for (let i = 0; i < 4; i++) spawnFirefly();
+      }
+
+      function startRun() {
+        ensureAudio();
+        if (audio.ctx && audio.ctx.state === "suspended") audio.ctx.resume();
+        resetRun();
+        game.state = "play";
+        sfx.start();
+      }
+
+      function endRun() {
+        game.state = "over";
+        game.score = Math.floor(game.score);
+        if (game.score > game.best) {
+          game.best = game.score;
+          game.newBest = true;
+          writeBest(game.best);
+        }
+        burst(game.player.x, game.player.y, 60, 30, 260, 1.4);
+        sfx.over();
+      }
+
+      // ---------- spawning ----------
+      function spawnFirefly() {
+        const m = 40;
+        let x, y;
+        let tries = 0;
+        do {
+          x = rand(m, W - m);
+          y = rand(m, H - m);
+          tries++;
+        } while (
+          dist2(x, y, game.player.x, game.player.y) < 120 ** 2 &&
+          tries < 10
+        );
+        game.fireflies.push({
+          x,
+          y,
+          vx: rand(-20, 20),
+          vy: rand(-20, 20),
+          phase: rand(0, 6.28),
+          life: CONFIG.firefly.life,
+        });
+      }
+
+      function spawnWisp() {
+        const side = Math.floor(Math.random() * 4);
+        const pad = 30;
+        const x = side === 0 ? -pad : side === 1 ? W + pad : rand(0, W);
+        const y = side === 2 ? -pad : side === 3 ? H + pad : rand(0, H);
+        game.wisps.push({
+          x,
+          y,
+          hp: 1,
+          wobble: rand(0, 6.28),
+          scale: rand(0.85, 1.25),
+        });
+      }
+
+      // ---------- particles ----------
+      function burst(x, y, n, hue, speed, life) {
+        for (
+          let i = 0;
+          i < n && game.particles.length < CONFIG.maxParticles;
+          i++
+        ) {
+          const a = rand(0, Math.PI * 2);
+          const s = rand(speed * 0.2, speed);
+          game.particles.push({
+            x,
+            y,
+            vx: Math.cos(a) * s,
+            vy: Math.sin(a) * s,
+            life: rand(life * 0.5, life),
+            max: life,
+            hue,
+            size: rand(1.5, 3.5),
+          });
+        }
+      }
+
+      // ---------- actions ----------
+      function flare() {
+        if (game.state !== "play" || game.flareCd > 0) return;
+        const cfg = CONFIG.flare;
+        if (game.light <= cfg.cost + 4) {
+          tone(120, 0.12, "square", 0.04);
+          return;
+        }
+        const r = lightRadius(game.light) * cfg.radiusMul + cfg.radiusAdd;
+        game.light -= cfg.cost;
+        game.flareCd = cfg.cooldown;
+        game.flash = 1;
+        game.shake = Math.max(game.shake, CONFIG.shake.flare);
+        game.rings.push({
+          x: game.player.x,
+          y: game.player.y,
+          r: 10,
+          max: r,
+          life: 0.45,
+        });
+        let killed = 0;
+        game.wisps = game.wisps.filter((w) => {
+          if (dist2(w.x, w.y, game.player.x, game.player.y) < r * r) {
+            burst(w.x, w.y, 18, 275, 200, 0.8);
+            killed++;
+            return false;
+          }
+          return true;
+        });
+        game.kills += killed;
+        game.score += killed * cfg.score;
+        burst(game.player.x, game.player.y, 50, 38, 420, 0.7);
+        sfx.flare();
+      }
+
+      // ---------- update ----------
+      function update(dt) {
+        updateParticles(dt);
+        if (game.state !== "play") return;
+
+        game.time += dt;
+        game.score += CONFIG.score.perSecond * dt;
+        game.flareCd = Math.max(0, game.flareCd - dt);
+        game.flash = Math.max(0, game.flash - dt * 2.5);
+
+        const L = CONFIG.light;
+        game.light -= (L.decayPerSec + L.decayRampPerMin * minutes()) * dt;
+
+        updatePlayer(dt);
+        updateFireflies(dt);
+        updateWisps(dt);
+
+        game.light = clamp(game.light, 0, L.max);
+        if (game.light <= 0) endRun();
+      }
+
+      function updatePlayer(dt) {
+        const p = game.player;
+        const k = input.keys;
+        let dx =
+          (k.has("ArrowRight") || k.has("KeyD") ? 1 : 0) -
+          (k.has("ArrowLeft") || k.has("KeyA") ? 1 : 0);
+        let dy =
+          (k.has("ArrowDown") || k.has("KeyS") ? 1 : 0) -
+          (k.has("ArrowUp") || k.has("KeyW") ? 1 : 0);
+        let speedMul = 1;
+        if (dx || dy) {
+          input.pointer.active = false;
+        } else if (input.pointer.active) {
+          dx = input.pointer.x - p.x;
+          dy = input.pointer.y - p.y;
+          speedMul = clamp(Math.hypot(dx, dy) / CONFIG.player.followEase, 0, 1);
+        }
+        const len = Math.hypot(dx, dy);
+        const tvx = len > 0.5 ? (dx / len) * CONFIG.player.speed * speedMul : 0;
+        const tvy = len > 0.5 ? (dy / len) * CONFIG.player.speed * speedMul : 0;
+        const ease = 1 - Math.exp(-12 * dt);
+        p.vx += (tvx - p.vx) * ease;
+        p.vy += (tvy - p.vy) * ease;
+        p.x = clamp(
+          p.x + p.vx * dt,
+          CONFIG.player.size,
+          W - CONFIG.player.size,
+        );
+        p.y = clamp(
+          p.y + p.vy * dt,
+          CONFIG.player.size,
+          H - CONFIG.player.size,
+        );
+        if (
+          Math.random() < dt * 30 &&
+          game.particles.length < CONFIG.maxParticles
+        ) {
+          game.particles.push({
+            x: p.x + rand(-3, 3),
+            y: p.y - 6,
+            vx: rand(-10, 10),
+            vy: rand(-40, -15),
+            life: 0.6,
+            max: 0.6,
+            hue: 35,
+            size: rand(1, 2.2),
+          });
+        }
+      }
+
+      function updateFireflies(dt) {
+        const cfg = CONFIG.firefly;
+        game.fireflyTimer -= dt;
+        if (game.fireflyTimer <= 0 && game.fireflies.length < cfg.maxOnField) {
+          spawnFirefly();
+          game.fireflyTimer = cfg.spawnEvery;
+        }
+        const p = game.player;
+        const pr = (cfg.pickupRadius + CONFIG.player.size) ** 2;
+        game.fireflies = game.fireflies.filter((f) => {
+          f.phase += dt * 3;
+          f.life -= dt;
+          f.vx += rand(-60, 60) * dt;
+          f.vy += rand(-60, 60) * dt;
+          f.vx = clamp(f.vx, -35, 35);
+          f.vy = clamp(f.vy, -35, 35);
+          f.x = clamp(f.x + f.vx * dt, 10, W - 10);
+          f.y = clamp(f.y + f.vy * dt, 10, H - 10);
+          if (dist2(f.x, f.y, p.x, p.y) < pr) {
+            game.light += cfg.restore;
+            game.score += cfg.score;
+            burst(f.x, f.y, 12, 160, 120, 0.6);
+            sfx.pickup();
+            return false;
+          }
+          return f.life > 0;
+        });
+      }
+
+      function updateWisps(dt) {
+        const cfg = CONFIG.wisp;
+        const m = minutes();
+        game.wispTimer -= dt;
+        if (game.wispTimer <= 0) {
+          spawnWisp();
+          if (m > 1.5 && Math.random() < 0.25) spawnWisp();
+          game.wispTimer =
+            Math.max(cfg.spawnMin, cfg.spawnStart - cfg.spawnRampPerMin * m) *
+            rand(0.7, 1.3);
+        }
+        const p = game.player;
+        const radius = lightRadius(game.light);
+        const contact = (cfg.radius + CONFIG.player.size) ** 2;
+        game.wisps = game.wisps.filter((w) => {
+          w.wobble += dt * 4;
+          const d = Math.sqrt(dist2(w.x, w.y, p.x, p.y)) || 1;
+          const inLight = d < radius;
+          const depth = inLight ? 1 - d / radius : 0; // 0 at edge, 1 at center
+          const speed =
+            (cfg.speedDark + cfg.speedRampPerMin * m) *
+            (inLight ? cfg.lightSlow : 1) *
+            (1 / w.scale);
+          const nx = (p.x - w.x) / d;
+          const ny = (p.y - w.y) / d;
+          w.x += (nx + Math.cos(w.wobble) * 0.35 * -ny) * speed * dt;
+          w.y += (ny + Math.sin(w.wobble) * 0.35 * nx) * speed * dt;
+          w.inLight = inLight;
+          if (inLight) {
+            w.hp -= cfg.burnPerSec * (0.4 + depth * 1.6) * dt;
+            if (Math.random() < dt * 20) burst(w.x, w.y, 1, 275, 50, 0.5);
+          }
+          if (w.hp <= 0) {
+            game.kills++;
+            game.score += cfg.burnScore;
+            burst(w.x, w.y, 16, 275, 160, 0.7);
+            sfx.burn();
+            return false;
+          }
+          if (dist2(w.x, w.y, p.x, p.y) < contact * w.scale) {
+            game.light -= cfg.contactDrain;
+            game.shake = Math.max(game.shake, CONFIG.shake.hit);
+            burst(p.x, p.y, 24, 280, 240, 0.6);
+            sfx.hit();
+            return false;
+          }
+          return true;
+        });
+      }
+
+      function updateParticles(dt) {
+        game.particles = game.particles.filter((pt) => {
+          pt.life -= dt;
+          pt.x += pt.vx * dt;
+          pt.y += pt.vy * dt;
+          pt.vx *= 1 - 2.5 * dt;
+          pt.vy *= 1 - 2.5 * dt;
+          return pt.life > 0;
+        });
+        game.rings = game.rings.filter((r) => {
+          r.life -= dt;
+          r.r += (r.max - r.r) * (1 - Math.exp(-14 * dt));
+          return r.life > 0;
+        });
+        game.shake = Math.max(0, game.shake - CONFIG.shake.decay * dt);
+      }
+
+      // ---------- render ----------
+      function render(now) {
+        ctx.save();
+        if (game.shake > 0 && !reducedMotion) {
+          ctx.translate(
+            rand(-game.shake, game.shake) * 0.5,
+            rand(-game.shake, game.shake) * 0.5,
+          );
+        }
+        ctx.drawImage(floor, 0, 0, W, H);
+        drawWorld(now);
+        drawDarkness(now);
+        drawGlows(now);
+        ctx.restore();
+        drawHud();
+        if (game.state !== "play") drawOverlay(now);
+      }
+
+      function drawWorld(now) {
+        // wisps (bodies are visible only where light reaches)
+        for (const w of game.wisps) {
+          const s = CONFIG.wisp.radius * w.scale;
+          const g = ctx.createRadialGradient(w.x, w.y, 0, w.x, w.y, s * 1.8);
+          g.addColorStop(0, `rgba(40, 10, 60, ${0.9 * w.hp + 0.1})`);
+          g.addColorStop(0.6, `rgba(90, 30, 140, ${0.6 * w.hp})`);
+          g.addColorStop(1, "rgba(60, 20, 90, 0)");
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          for (let i = 0; i <= 12; i++) {
+            const a = (i / 12) * Math.PI * 2;
+            const rr = s * (1.4 + Math.sin(a * 3 + w.wobble * 2) * 0.25);
+            const px = w.x + Math.cos(a) * rr;
+            const py = w.y + Math.sin(a) * rr;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.fill();
+        }
+        // player lantern
+        const p = game.player;
+        if (game.state === "play" || game.state === "paused") {
+          const bob = Math.sin(now / 250) * 1.5;
+          ctx.fillStyle = "#3a2a1a";
+          ctx.fillRect(p.x - 1, p.y - 18 + bob, 2, 6);
+          ctx.fillStyle = "#6b4a24";
+          ctx.fillRect(p.x - 7, p.y - 12 + bob, 14, 3);
+          ctx.fillRect(p.x - 7, p.y + 9 + bob, 14, 3);
+          const g = ctx.createRadialGradient(
+            p.x,
+            p.y + bob,
+            0,
+            p.x,
+            p.y + bob,
+            CONFIG.player.size,
+          );
+          g.addColorStop(0, "#fff6d8");
+          g.addColorStop(0.5, "#ffc861");
+          g.addColorStop(1, "#d97a1a");
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.ellipse(p.x, p.y + bob, 7, 10, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      function drawDarkness(now) {
+        dctx.globalCompositeOperation = "source-over";
+        dctx.clearRect(0, 0, W, H);
+        dctx.fillStyle = "rgba(2, 3, 10, 0.965)";
+        dctx.fillRect(0, 0, W, H);
+        if (
+          game.state === "play" ||
+          game.state === "paused" ||
+          game.state === "title"
+        ) {
+          const p =
+            game.state === "title" ? { x: W / 2, y: H / 2 } : game.player;
+          const lightVal =
+            game.state === "title" ? 55 + Math.sin(now / 900) * 8 : game.light;
+          const flicker = Math.sin(now / 70) * 0.5 + Math.sin(now / 37) * 0.5;
+          const r =
+            lightRadius(lightVal) +
+            flicker * CONFIG.light.flicker +
+            game.flash * 220;
+          dctx.globalCompositeOperation = "destination-out";
+          const g = dctx.createRadialGradient(p.x, p.y, r * 0.05, p.x, p.y, r);
+          g.addColorStop(0, "rgba(0,0,0,1)");
+          g.addColorStop(0.55, "rgba(0,0,0,0.85)");
+          g.addColorStop(1, "rgba(0,0,0,0)");
+          dctx.fillStyle = g;
+          dctx.beginPath();
+          dctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+          dctx.fill();
+        }
+        ctx.drawImage(dark, 0, 0, W, H);
+        // warm tint inside the light
+        if (game.state === "play" || game.state === "paused") {
+          const p = game.player;
+          const r = lightRadius(game.light);
+          ctx.globalCompositeOperation = "lighter";
+          const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+          g.addColorStop(0, `rgba(255, 170, 70, ${0.22 + game.flash * 0.4})`);
+          g.addColorStop(1, "rgba(255, 120, 40, 0)");
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalCompositeOperation = "source-over";
+        }
+      }
+
+      function drawGlows(now) {
+        ctx.globalCompositeOperation = "lighter";
+        for (const f of game.fireflies) {
+          const fade = Math.min(1, f.life / 2);
+          const a = (0.55 + Math.sin(f.phase) * 0.35) * fade;
+          const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, 16);
+          g.addColorStop(0, `rgba(170, 255, 220, ${a})`);
+          g.addColorStop(0.3, `rgba(80, 230, 190, ${a * 0.5})`);
+          g.addColorStop(1, "rgba(40, 200, 160, 0)");
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(f.x, f.y, 16, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        for (const pt of game.particles) {
+          const a = pt.life / pt.max;
+          ctx.fillStyle = `hsla(${pt.hue}, 95%, 65%, ${a})`;
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, pt.size * a + 0.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        for (const r of game.rings) {
+          ctx.strokeStyle = `rgba(255, 210, 120, ${r.life * 2})`;
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.globalCompositeOperation = "source-over";
+        // wisp eyes: a faint warning even in the dark
+        for (const w of game.wisps) {
+          const blink = Math.sin(now / 400 + w.wobble) > 0.95 ? 0.2 : 1;
+          ctx.fillStyle = w.inLight
+            ? "rgba(255, 120, 230, 0.95)"
+            : `rgba(200, 120, 255, ${0.55 * blink})`;
+          const s = 2.4 * w.scale;
+          ctx.beginPath();
+          ctx.arc(w.x - 4 * w.scale, w.y - 2, s, 0, Math.PI * 2);
+          ctx.arc(w.x + 4 * w.scale, w.y - 2, s, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      function drawHud() {
+        if (game.state === "title") return;
+        const pad = 16;
+        const bw = Math.min(240, W - pad * 2 - 110);
+        ctx.font =
+          "600 12px system-ui, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif";
+        ctx.textBaseline = "top";
+        ctx.fillStyle = "rgba(243, 230, 200, 0.8)";
+        ctx.fillText("빛 LIGHT", pad, pad);
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        ctx.fillRect(pad, pad + 18, bw, 10);
+        const frac = game.light / CONFIG.light.max;
+        const low = frac < 0.25;
+        ctx.fillStyle =
+          low && Math.floor(performance.now() / 250) % 2
+            ? "#ff6a4d"
+            : "#ffb84d";
+        ctx.fillRect(pad, pad + 18, bw * frac, 10);
+        const costX = pad + bw * (CONFIG.flare.cost / CONFIG.light.max);
+        ctx.fillStyle = "rgba(4,5,12,0.7)";
+        ctx.fillRect(costX, pad + 18, 1.5, 10);
+
+        const ready = game.flareCd <= 0 && game.light > CONFIG.flare.cost + 4;
+        ctx.fillStyle = ready
+          ? "rgba(255, 210, 120, 0.95)"
+          : "rgba(243, 230, 200, 0.35)";
+        ctx.fillText(
+          ready ? "플레어 준비 ✦ Space · 우클릭 · 더블탭" : "플레어 충전 중…",
+          pad,
+          pad + 36,
+        );
+
+        ctx.textAlign = "right";
+        ctx.font = "700 22px system-ui, -apple-system, sans-serif";
+        ctx.fillStyle = "#f3e6c8";
+        ctx.fillText(String(Math.floor(game.score)), W - pad, pad);
+        ctx.font = "500 12px system-ui, -apple-system, sans-serif";
+        ctx.fillStyle = "rgba(243, 230, 200, 0.6)";
+        ctx.fillText(
+          `${formatTime(game.time)} · 최고 ${game.best}${audio.muted ? " · 음소거" : ""}`,
+          W - pad,
+          pad + 28,
+        );
+        ctx.textAlign = "left";
+      }
+
+      function formatTime(t) {
+        const s = Math.floor(t);
+        return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+      }
+
+      function drawOverlay(now) {
+        ctx.fillStyle =
+          game.state === "title" ? "rgba(4,5,12,0.25)" : "rgba(4,5,12,0.6)";
+        ctx.fillRect(0, 0, W, H);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const cx = W / 2;
+        const cy = H / 2;
+        const big = Math.min(54, W / 9);
+        const font =
+          "system-ui, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif";
+        const pulse = 0.6 + Math.sin(now / 400) * 0.4;
+        if (game.state === "title") {
+          ctx.font = `800 ${big}px ${font}`;
+          ctx.fillStyle = "#ffcf7a";
+          ctx.fillText("LANTERN DRIFT", cx, cy - big * 1.9);
+          ctx.font = `600 ${big * 0.4}px ${font}`;
+          ctx.fillStyle = "rgba(243,230,200,0.85)";
+          ctx.fillText("등불 표류", cx, cy - big * 1.05);
+          ctx.font = `400 14px ${font}`;
+          ctx.fillStyle = "rgba(243,230,200,0.75)";
+          const lines = [
+            "빛이 곧 생명이자 무기입니다. 꺼지면 끝.",
+            "🟢 반딧불을 모아 빛을 채우세요",
+            "🟣 그림자는 빛 안에서 느려지고 타 버립니다",
+            "✦ 플레어: Space · 우클릭 · 더블탭 (빛 소모)",
+            "이동: 마우스/터치 · WASD/방향키   일시정지: P   소리: M",
+          ];
+          lines.forEach((l, i) => ctx.fillText(l, cx, cy + 70 + i * 22));
+          ctx.font = `700 18px ${font}`;
+          ctx.fillStyle = `rgba(255, 200, 110, ${pulse})`;
+          ctx.fillText(
+            "클릭 또는 Enter로 시작",
+            cx,
+            cy + 70 + lines.length * 22 + 26,
+          );
+        } else if (game.state === "paused") {
+          ctx.font = `800 ${big * 0.8}px ${font}`;
+          ctx.fillStyle = "#f3e6c8";
+          ctx.fillText("일시정지", cx, cy - 10);
+          ctx.font = `500 15px ${font}`;
+          ctx.fillStyle = `rgba(243,230,200,${pulse})`;
+          ctx.fillText("P 또는 클릭으로 계속", cx, cy + 34);
+        } else if (game.state === "over") {
+          ctx.font = `800 ${big * 0.85}px ${font}`;
+          ctx.fillStyle = "#ff9a6a";
+          ctx.fillText("등불이 꺼졌습니다", cx, cy - 70);
+          ctx.font = `700 ${big * 0.7}px ${font}`;
+          ctx.fillStyle = "#f3e6c8";
+          ctx.fillText(String(game.score), cx, cy - 10);
+          ctx.font = `500 15px ${font}`;
+          ctx.fillStyle = "rgba(243,230,200,0.75)";
+          ctx.fillText(
+            `생존 ${formatTime(game.time)} · 그림자 ${game.kills}마리 · 최고 ${game.best}`,
+            cx,
+            cy + 32,
+          );
+          if (game.newBest) {
+            ctx.fillStyle = "#ffcf7a";
+            ctx.fillText("✦ 새 최고 기록! ✦", cx, cy + 58);
+          }
+          ctx.font = `700 17px ${font}`;
+          ctx.fillStyle = `rgba(255, 200, 110, ${pulse})`;
+          ctx.fillText("클릭 · Enter · R 로 다시 시작", cx, cy + 96);
+        }
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+      }
+
+      // ---------- input ----------
+      function togglePause() {
+        if (game.state === "play") game.state = "paused";
+        else if (game.state === "paused") game.state = "play";
+      }
+      function primaryAction() {
+        if (game.state === "title" || game.state === "over") startRun();
+        else if (game.state === "paused") game.state = "play";
+      }
+
+      window.addEventListener("keydown", (e) => {
+        if (
+          ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(
+            e.code,
+          )
+        )
+          e.preventDefault();
+        if (e.repeat) return;
+        input.keys.add(e.code);
+        ensureAudio();
+        if (e.code === "Enter") primaryAction();
+        else if (e.code === "Space")
+          game.state === "play" ? flare() : primaryAction();
+        else if (e.code === "KeyR" && game.state === "over") startRun();
+        else if (e.code === "KeyP" || e.code === "Escape") togglePause();
+        else if (e.code === "KeyM") audio.muted = !audio.muted;
+      });
+      window.addEventListener("keyup", (e) => input.keys.delete(e.code));
+      window.addEventListener("blur", () => {
+        input.keys.clear();
+        if (game.state === "play") game.state = "paused";
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden && game.state === "play") game.state = "paused";
+      });
+
+      canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+      canvas.addEventListener("pointermove", (e) => {
+        input.pointer.x = e.clientX;
+        input.pointer.y = e.clientY;
+        if (game.state === "play") input.pointer.active = true;
+      });
+      canvas.addEventListener("pointerdown", (e) => {
+        input.pointer.x = e.clientX;
+        input.pointer.y = e.clientY;
+        if (game.state !== "play") {
+          primaryAction();
+          return;
+        }
+        input.pointer.active = true;
+        if (e.button === 2) {
+          flare();
+          return;
+        }
+        if (e.pointerType === "touch") {
+          const t = performance.now();
+          if (t - input.lastTap < 300) flare();
+          input.lastTap = t;
+        }
+      });
+
+      // ---------- loop ----------
+      let last = performance.now();
+      function frame(now) {
+        const dt = Math.min(1 / 30, (now - last) / 1000);
+        last = now;
+        update(dt);
+        render(now);
+        requestAnimationFrame(frame);
+      }
+
+      window.addEventListener("resize", resize);
+      resize();
+      requestAnimationFrame(frame);
+
+      // Test seam for automated run-and-observe checks.
+      window.__lantern = { game, CONFIG, startRun, flare, update, lightRadius };
+    </script>
+  </body>
+</html>
